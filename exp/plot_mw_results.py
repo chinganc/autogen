@@ -118,13 +118,16 @@ def compute_stat(results, key):
     return mean, ste
 
 
-def plot_comparison(data, plot_dir):
+def plot_comparison(data, plot_dir, legend=True):
     # Plot
     # plot_dir = os.path.join(exp_dir, 'plots')
 
     os.makedirs(plot_dir, exist_ok=True)
 
-    keys = data["masked"][0]["data"].keys()
+    font1 = {"family": "serif", "size": 15}  # legend
+    font2 = {"family": "serif", "size": 20}  # labels
+
+    keys = [v for v in data.values()][0][0]["data"].keys()
     for k in keys:
         for name, results in data.items():
             # plot stat with confidence interval
@@ -132,9 +135,19 @@ def plot_comparison(data, plot_dir):
             plt.plot(mean, label=name)
             plt.fill_between(range(len(mean)), mean - ste, mean + ste, alpha=0.2)
 
+        if "return" in k.lower():
+            plt.ylabel("Return", fontdict=font2)
+        elif "success" in k.lower():
+            plt.ylabel("Success", fontdict=font2)
+
+        plt.xlabel("Iterations", fontdict=font2)
+        plt.xticks(fontsize=12)
+        plt.yticks(fontsize=12)
+        plt.tight_layout()
+
         # save plot
-        plt.title(k)
-        plt.legend()
+        if legend:
+            plt.legend(prop=font1)
         file_name = k.replace("/", "_")
         plt.savefig(f"{plot_dir}/{file_name}.png")
         plt.show()
@@ -146,26 +159,28 @@ if __name__ == "__main__":
     # rootdir = 'exp_results/gpt4v'
     # env_name = 'llf-metaworld-push-v2'
     # env_name = 'llf-metaworld-pick-place-v2'
-    env_name = "llf-metaworld-reach-v2"
+    # env_name = "llf-metaworld-reach-v2"
 
-    data = {}
+    env_names = ["llf-metaworld-push-v2", "llf-metaworld-pick-place-v2", "llf-metaworld-reach-v2"]
+    for env_name in env_names:
+        data = {}
 
-    logdir = os.path.join(rootdir, "opro")
-    exp_dir = os.path.join(logdir, env_name)
-    data["opro"] = load_data(exp_dir)
+        logdir = os.path.join(rootdir, "opro")
+        exp_dir = os.path.join(logdir, env_name)
+        data["OPRO"] = load_data(exp_dir)
 
-    logdir = os.path.join(rootdir, "trace")
-    exp_dir = os.path.join(logdir, env_name)
-    data["trace"] = load_data(exp_dir)
+        logdir = os.path.join(rootdir, "trace_memory10")
+        exp_dir = os.path.join(logdir, env_name)
+        data["Trace"] = load_data(exp_dir)
 
-    logdir = os.path.join(rootdir, "trace_memory10")
-    exp_dir = os.path.join(logdir, env_name)
-    data["trace+memory"] = load_data(exp_dir)
+        logdir = os.path.join(rootdir, "trace")
+        exp_dir = os.path.join(logdir, env_name)
+        data["Trace NoMem"] = load_data(exp_dir)
 
-    logdir = os.path.join(rootdir, "baseline")
-    exp_dir = os.path.join(logdir, env_name)
-    data["masked"] = load_data(exp_dir)
+        logdir = os.path.join(rootdir, "baseline")
+        exp_dir = os.path.join(logdir, env_name)
+        data["Trace Masked"] = load_data(exp_dir)
 
-    plot_dir = os.path.join(rootdir, "plots", env_name)
+        plot_dir = os.path.join(rootdir, "plots", env_name)
 
-    plot_comparison(data, plot_dir)
+        plot_comparison(data, plot_dir, legend="reach" in env_name)
