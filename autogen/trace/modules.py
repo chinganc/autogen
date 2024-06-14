@@ -140,5 +140,6 @@ def to_data(obj):
         output = copy.copy(obj)
         for k, v in obj.__dict__.items():
             setattr(output, k, to_data(v))
+        return output
     else:
         return obj
