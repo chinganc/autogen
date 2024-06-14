@@ -9,7 +9,7 @@ from datasets import load_dataset
 
 from typing import List
 import copy
-from autogen.trace.trace_ops import FunModule, trace_op, trace_class, TraceExecutionError
+from autogen.trace.bundle import FunModule, trace_op, trace_class, TraceExecutionError
 from autogen.trace.nodes import Node
 
 import re
