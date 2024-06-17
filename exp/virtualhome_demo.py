@@ -22,10 +22,12 @@ import pandas as pd
 from pathlib import Path
 from envs.unity_environment import UnityEnvironment
 # from agents import LLM_agent
-from arguments import get_args
+# from arguments import get_args
 # from algos.arena_mp2 import ArenaMP
 import logging
 from dataclasses import dataclass
+
+import virtualhome_agent
 
 import atexit
 from collections import defaultdict
@@ -78,15 +80,9 @@ class Config:
     log_thoughts = True
     debug=False
 
-def build_env():
-    print("Init env")
-    env = env_fn(0)
-
-    import pdb; pdb.set_trace()
-
-
 class TraceArena(object):
-    def __init__(self, max_number_steps, arena_id, env_fn, agent_fn, record_dir='out', debug=False, run_predefined_actions=False, comm=False, args=None):
+    def __init__(self, max_number_steps, arena_id, env_fn, agent_fn, record_dir='out',
+                 debug=False, run_predefined_actions=False, comm=False, args=None):
         # skipped some initialization
 
         print("Init Env")
@@ -191,8 +187,143 @@ class TraceArena(object):
             (obs, reward, done, infos, messages), actions, agent_info = self.step()
         pass
 
-class ActionAgent():
-    pass
+
+"""
+Goal:
+High-level wrappers to take steps in the environment
+Return text observations for each agent, and reward and stuff
+"""
+
+class TraceVirtualHome:
+    def __init__(self, max_number_steps, run_id, env_fn, agent_fn, num_agents, record_dir='out', debug=False, run_predefined_actions=False, comm=False, args=None):
+        print("Init Env")
+        self.env = env_fn(run_id)
+        self.converse_agents = []
+        self.comm_cost_info = {
+            "converse": {"overall_tokens": 0, "overall_times": 0},
+            "select": {"tokens_in": 0, "tokens_out": 0}
+        }
+
+        self.max_episode_length = self.env.max_episode_length
+        self.max_number_steps = max_number_steps
+        self.run_predefined_actions = run_predefined_actions
+        atexit.register(self.close)
+
+        self.dict_info = {}
+        self.dict_dialogue_history = defaultdict(list)
+        self.LLM_returns = {}
+
+        self.arena_id = run_id
+        self.env_fn = env_fn
+        self.agent_names = ["Agent_{}".format(i + 1) for i in range(len(agent_fn))]
+
+        env_task_set = pickle.load(open(args.dataset_path, 'rb'))
+        logging.basicConfig(format='%(asctime)s - %(name)s:\n %(message)s', level=logging.INFO)
+        logger = logging.getLogger(__name__)
+
+        # skipped a lot of logging
+
+        args.record_dir = f'../test_results/{args.mode}'
+        logger.info("mode: {}".format(args.mode))
+        Path(args.record_dir).mkdir(parents=True, exist_ok=True)
+
+        if "image" in args.obs_type or args.gen_video:
+            os.system("Xvfb :94 & export DISPLAY=:94")
+            import time
+            time.sleep(3)  # ensure Xvfb is open
+            os.environ["OPENCV_IO_ENABLE_OPENEXR"] = "1"
+            executable_args = {
+                'file_name': args.executable_file,
+                'x_display': '94',
+                'no_graphics': False,
+                'timeout_wait': 5000,
+            }
+
+        env = env_fn(run_id)
+        self.env = env
+        self.agents = []
+        self.num_agents = num_agents
+
+        for i in range(self.num_agents):
+            self.agents.append(virtualhome_agent.LLM_agent(agent_id=i + 1, args=args))
+
+    def reset(self, task_id=None, reset_seed=None):
+        self.cnt_duplicate_subgoal = 0
+        self.cnt_nouse_subgoal = 0
+        self.dict_info = {}
+        self.dict_dialogue_history = defaultdict(list)
+        self.LLM_returns = {}
+        self.converse_agents = []
+        self.comm_cost_info = {
+            "converse": {"overall_tokens": 0, "overall_times": 0},
+            "select": {"tokens_in": 0, "tokens_out": 0}
+        }
+        for i in range(self.num_agents):
+            # reset conversable agents
+            pass
+
+        ob = None
+        while ob is None:
+            ob = self.env.reset(task_id=task_id, reset_seed=reset_seed)
+
+        for it, agent in enumerate(self.agents):
+            agent.reset(ob[it], self.env.all_containers_name, self.env.all_goal_objects_name, self.env.all_room_name,
+                        self.env.room_info, self.env.goal_spec[it])
+
+        # return observation required for planning
+        obs = self.env.get_observations()
+        agent_goal_specs = {}
+        agent_obs = {}
+
+        for it in range(self.num_agents):
+            goal_spec = self.env.get_goal(self.env.task_goal[it], self.env.agent_goals[it])
+            agent_goal_specs[it] = goal_spec
+
+            agent_obs[it] = self.agents[it].get_obs_forLLM_plan()
+
+        # use these two, we can generate plans...
+        return agent_obs, agent_goal_specs
+
+    def close(self):
+        self.env.close()
+
+    def get_port(self):
+        return self.env.port_number
+
+    def reset_env(self):
+        self.env.close()
+        self.env = self.env_fn(self.arena_id)
+
+    def env_step(self, dict_actions):
+        try:
+            step_info = self.env.step(dict_actions)
+        except Exception as e:
+            print("Exception occurs when performing action: ", dict_actions)
+            raise Exception
+
+        return step_info
+    def step(self, plans, a_infos, LM_times):
+        """
+        plans: {agent_id: plan}
+        a_infos: {agent_id: info}
+        LM_times: {agent_id: time}
+
+        Get raw obs from env, turn into text obs
+        """
+        if self.env.steps == 0:
+            pass
+
+        dict_actions = {}
+
+        for it, agent in enumerate(self.agents):
+            dict_actions[it], self.dict_info[it] = agent.get_action(plans[it], a_infos[it], LM_times[it],
+                                                                    dialogue_history=self.dict_dialogue_history[
+                                                                        self.agent_names[it]])
+
+        step_info = self.env_step(dict_actions)
+
+        return step_info, dict_actions, self.dict_info
+
 
 """
 1. An arena to coordinate all agents, reset all of them, take centralized step
@@ -218,34 +349,5 @@ if __name__ == '__main__':
 
     args = Config()
 
-    env_task_set = pickle.load(open(args.dataset_path, 'rb'))
-    logging.basicConfig(format='%(asctime)s - %(name)s:\n %(message)s', level=logging.INFO)
-    logger = logging.getLogger(__name__)
-    # logger.addHandler(File_handler)
 
-    # skipped a lot of logging
-
-    args.record_dir = f'../test_results/{args.mode}'
-    logger.info("mode: {}".format(args.mode))
-    Path(args.record_dir).mkdir(parents=True, exist_ok=True)
-
-    if "image" in args.obs_type or args.gen_video:
-        os.system("Xvfb :94 & export DISPLAY=:94")
-        import time
-        time.sleep(3) # ensure Xvfb is open
-        os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1"
-        executable_args = {
-                        'file_name': args.executable_file,
-                        'x_display': '94',
-                        'no_graphics': False,
-                        'timeout_wait': 5000,
-        }
-    else:
-        executable_args = {
-                        'file_name': args.executable_file,
-                        'no_graphics': True,
-                        'timeout_wait': 500,
-        }
-
-    build_env()
 

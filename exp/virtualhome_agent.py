@@ -21,9 +21,6 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from envs.unity_environment import UnityEnvironment
-# from agents import LLM_agent
-from arguments import get_args
-# from algos.arena_mp2 import ArenaMP
 import logging
 from dataclasses import dataclass
 
@@ -61,8 +58,7 @@ class LLM_agent:
         self.llm_config = args.llm_config_list[agent_id - 1]
         self.prompt_template_path = args.prompt_template_path
         self.args = args
-        self.LLM = LLM(self.lm_id, self.llm_config, self.prompt_template_path, self.args, self.agent_id,
-                       self.agent_names)
+        self.LLM = LLM(self.lm_id, self.prompt_template_path, self.args, self.agent_id, self.agent_names)
 
         self.action_history = []
         self.dialogue_history = []
@@ -186,11 +182,23 @@ class LLM_agent:
         x = self.id2node[self.grabbed_objects[0]]
         return f"{action} <{x['class_name']}> ({x['id']}) <{y['class_name']}> ({y['id']})"
 
-    def LLM_plan(self):
-        if len(self.grabbed_objects) == 2:
-            return f"[goput] {self.goal_location}", {}
+    # def LLM_plan(self):
+    #     if len(self.grabbed_objects) == 2:
+    #         return f"[goput] {self.goal_location}", {}
+    #
+    #     return self.LLM.run(self.current_room, [self.id2node[x] for x in self.grabbed_objects], self.satisfied,
+    #                         self.unchecked_containers,
+    #                         self.ungrabbed_objects, self.id_inside_room[self.goal_location_id],
+    #                         self.action_history, self.dialogue_history, self.teammate_grabbed_objects,
+    #                         [self.id_inside_room[teammate_agent_id_item] for teammate_agent_id_item in
+    #                          self.teammate_agent_id], None, self.steps)
 
-        return self.LLM.run(self.current_room, [self.id2node[x] for x in self.grabbed_objects], self.satisfied,
+    def get_obs_forLLM_plan(self):
+        # this can be called...
+        if len(self.grabbed_objects) == 2:
+                return f"[goput] {self.goal_location}", {}
+
+        return self.LLM.get_runnable(self.current_room, [self.id2node[x] for x in self.grabbed_objects], self.satisfied,
                             self.unchecked_containers,
                             self.ungrabbed_objects, self.id_inside_room[self.goal_location_id],
                             self.action_history, self.dialogue_history, self.teammate_grabbed_objects,
@@ -318,8 +326,12 @@ class LLM_agent:
                                       [self.id_inside_room[teammate_agent_id_item] for teammate_agent_id_item in
                                        self.teammate_agent_id], None, self.steps)
 
-    def get_action(self, observation, goal, dialogue_history=None):
+    def get_action(self, plan, a_info, LM_times, observation, goal, dialogue_history=None):
         """
+        a_info: passed in from LLM module's get_runnable()
+
+        takes in a plan, a context (how many times LLM has been called, and execute the plan into action)
+
         :param observation: {"edges":[{'from_id', 'to_id', 'relation_type'}],
         "nodes":[{'id', 'category', 'class_name', 'prefab_name', 'obj_transform':{'position', 'rotation', 'scale'}, 'bounding_box':{'center','size'}, 'properties', 'states'}],
         "messages": [None, None]
@@ -333,53 +345,40 @@ class LLM_agent:
 
         info = self.obs_processing(observation, goal)
         action = None
-        LM_times = 0
-        while action is None:
-            if self.plan is None:
-                if LM_times > 0:
-                    print("Retrying LM Plan: ", info)
-                    self.LLM.llm_config.update({"seed": random.randint(0, 100000)})
-                if LM_times > 3:
-                    plan = f"[wait]"  # TODO just workround
-                # raise Exception(f"retrying LM_plan too many times")
-                plan, a_info = self.LLM_plan()
-                # if self.debug:
-                # 	print(LM_times, "plan: ", plan)
-                if plan is None:  # NO AVAILABLE PLANS! Explore from scratch!
-                    print("No more things to do!")
-                    plan = f"[wait]"
-                self.plan = plan
-                a_info.update({"steps": self.steps})
-                info.update({"LLM": a_info})
-                LM_times += 1
-            if self.plan.startswith('[goexplore]'):
-                action = self.goexplore(LM_times)
-            elif self.plan.startswith('[gocheck]'):
-                action = self.gocheck()
-            elif self.plan.startswith('[gograb]'):
-                action = self.gograb()
-            elif self.plan.startswith('[goput]'):
-                action = self.goput()
-            elif self.plan.startswith('[send_message]'):
-                action = self.plan[:]
-                self.plan = None
-            elif self.plan.startswith('[wait]'):
-                action = None
-                break
-            else:
-                raise ValueError(f"unavailable plan {self.plan}")
+
+        if plan is None:
+            print("No more things to do!")
+            plan = f"[wait]"
+
+        self.plan = plan
+        a_info.update({"steps": self.steps})
+        info.update({"LLM": a_info})
+
+        if self.plan.startswith('[goexplore]'):
+            action = self.goexplore(LM_times)
+        elif self.plan.startswith('[gocheck]'):
+            action = self.gocheck()
+        elif self.plan.startswith('[gograb]'):
+            action = self.gograb()
+        elif self.plan.startswith('[goput]'):
+            action = self.goput()
+        elif self.plan.startswith('[send_message]'):
+            action = self.plan[:]
+            self.plan = None
+        elif self.plan.startswith('[wait]'):
+            action = None
+        else:
+            raise ValueError(f"unavailable plan {self.plan}")
 
         self.action_history.append(action if action is not None else self.plan)
-        # if self.debug:
-        # print("action:\n", action, "\n\n")
-        # logger.info(f"action:\n{action}\n")
+
         self.steps += 1
-        info.update({"plan": self.plan,
-                     })
+        info.update({"plan": self.plan})
         if action == self.last_action and self.current_room['class_name'] == self.last_room['class_name']:
             self.stuck += 1
         else:
             self.stuck = 0
+
         self.last_action = action
         self.last_room = self.current_room
         if self.stuck > 20:
@@ -396,6 +395,85 @@ class LLM_agent:
             self.stuck = 0
 
         return action, info
+
+    # def get_action(self, observation, goal, dialogue_history=None):
+    #     """
+    #     :param observation: {"edges":[{'from_id', 'to_id', 'relation_type'}],
+    #     "nodes":[{'id', 'category', 'class_name', 'prefab_name', 'obj_transform':{'position', 'rotation', 'scale'}, 'bounding_box':{'center','size'}, 'properties', 'states'}],
+    #     "messages": [None, None]
+    #     }
+    #     :param goal:{predicate:[count, True, 2]}
+    #     :return:
+    #     """
+    #     # Apply autogen as an independant communication module
+    #     if self.args.comm and dialogue_history is not None and dialogue_history != []:
+    #         self.dialogue_history = [word for dialogue in dialogue_history for word in dialogue]
+    #
+    #     info = self.obs_processing(observation, goal)
+    #     action = None
+    #     LM_times = 0
+    #     while action is None:
+    #         if self.plan is None:
+    #             if LM_times > 0:
+    #                 print("Retrying LM Plan: ", info)
+    #                 self.LLM.llm_config.update({"seed": random.randint(0, 100000)})
+    #             if LM_times > 3:
+    #                 plan = f"[wait]"  # TODO just workround
+    #             # raise Exception(f"retrying LM_plan too many times")
+    #             plan, a_info = self.LLM_plan()
+    #             # if self.debug:
+    #             # 	print(LM_times, "plan: ", plan)
+    #             if plan is None:  # NO AVAILABLE PLANS! Explore from scratch!
+    #                 print("No more things to do!")
+    #                 plan = f"[wait]"
+    #             self.plan = plan
+    #             a_info.update({"steps": self.steps})
+    #             info.update({"LLM": a_info})
+    #             LM_times += 1
+    #         if self.plan.startswith('[goexplore]'):
+    #             action = self.goexplore(LM_times)
+    #         elif self.plan.startswith('[gocheck]'):
+    #             action = self.gocheck()
+    #         elif self.plan.startswith('[gograb]'):
+    #             action = self.gograb()
+    #         elif self.plan.startswith('[goput]'):
+    #             action = self.goput()
+    #         elif self.plan.startswith('[send_message]'):
+    #             action = self.plan[:]
+    #             self.plan = None
+    #         elif self.plan.startswith('[wait]'):
+    #             action = None
+    #             break
+    #         else:
+    #             raise ValueError(f"unavailable plan {self.plan}")
+    #
+    #     self.action_history.append(action if action is not None else self.plan)
+    #     # if self.debug:
+    #     # print("action:\n", action, "\n\n")
+    #     # logger.info(f"action:\n{action}\n")
+    #     self.steps += 1
+    #     info.update({"plan": self.plan,
+    #                  })
+    #     if action == self.last_action and self.current_room['class_name'] == self.last_room['class_name']:
+    #         self.stuck += 1
+    #     else:
+    #         self.stuck = 0
+    #     self.last_action = action
+    #     self.last_room = self.current_room
+    #     if self.stuck > 20:
+    #         print("Warning! stuck!")
+    #         self.action_history[-1] += ' but unfinished'
+    #         self.plan = None
+    #         if type(self.id_inside_room[self.goal_location_id]) is list:
+    #             target_room_name = self.id_inside_room[self.goal_location_id][0]
+    #         else:
+    #             target_room_name = self.id_inside_room[self.goal_location_id]
+    #         action = f"[walktowards] {self.goal_location}"
+    #         if self.current_room['class_name'] != target_room_name:
+    #             action = f"[walktowards] <{target_room_name}> ({self.roomname2id[target_room_name]})"
+    #         self.stuck = 0
+    #
+    #     return action, info
 
     def reset(self, obs, containers_name, goal_objects_name, rooms_name, room_info, goal):
         self.steps = 0
@@ -440,13 +518,78 @@ class LLM_agent:
         self.LLM.reset(self.rooms_name, self.roomname2id, self.goal_location, self.unsatisfied)
 
 
+import random
+from autogen import oai
+import openai
+import torch
+import json
+from json import JSONDecodeError
+import os
+import pandas as pd
+# from openai.error import OpenAIError
+from openai import OpenAIError
+
+import backoff
+import logging
+
+logger = logging.getLogger("__main__")
 
 
+class ChatCompletionManager:
+    def __init__(self):
+        self.human_agents = {}
+        self.next_port = 7861
+
+    def close(self):
+        for port, item in self.human_agent_dict.items():
+            # Close the parent connection
+            item[2].join()
+        for port, item in self.human_agent_dict.items():
+            item[0].close()
+
+    def create(self, messages, config_list=None, *args, **kwargs):
+        if kwargs.get('human_agent') is None:
+            import autogen
+            return autogen.OpenAIWrapper(config_list=config_list).create(messages=messages, *args, **kwargs)
+
+            # return oai.ChatCompletion.create(messages=messages, config_list=config_list, request_timeout=600, *args, **kwargs)
+
+        # human player
+        else:
+            port = kwargs['human_agent']
+            parent_conn, child_conn, _ = self.human_agents[port]
+            str_message = ""
+            for i in range(len(messages)):
+                str_message += f"{messages[i]['role']} :" + messages[i]['content'] + '\n'
+
+            parent_conn.send(str_message)
+            str_result = parent_conn.recv()
+            print("str_result:", str_result)
+
+            if '{' not in str_result:
+                str_result = '{"action": "' + str_result + '", "thoughts": ""}'
+
+            # json_result = json.loads(str_result)
+            # if json_result.get('thoughts') is None:
+            #     json_result['thoughts'] = ""
+
+            # str_result = json.dumps(json_result)
+
+            result = {
+                'usage': {
+                    'prompt_tokens': 9999,
+                    'completion_tokens': 9999,
+                },
+                'choices': [{'message': {'content': str_result, 'role': 'assistant'}}]
+            }
+            return result
+
+
+# oai_wrapper = ChatCompletionManager()
 
 class LLM:
     def __init__(self,
                  lm_id,
-                 llm_config,
                  prompt_template_path,
                  args,
                  agent_id,
@@ -483,27 +626,6 @@ class LLM:
         self.total_cost = 0
         self.all_actions = 0
         self.failed_actions = 0
-        self.llm_config = llm_config
-        self.sampling_params = {
-            "max_tokens": args.max_tokens,
-            "temperature": args.t,
-            "top_p": args.top_p,
-            "n": args.n,
-        }
-
-        self.generator = self.lm_engine()
-
-    def lm_engine(self):
-
-        @backoff.on_exception(backoff.expo, Exception)
-        def _generate(prompt, sampling_params=None):
-            response = oai_wrapper.create(messages=prompt, config_list=[self.llm_config],
-                                          **self.sampling_params)  # , use_cache=False cache_seed=self.llm_config['seed']
-            usage = response["usage"]
-            response = response["choices"][0]["message"]["content"]
-            return response, usage
-
-        return _generate
 
     def reset(self, rooms_name, roomname2id, goal_location, unsatisfied):
         self.rooms = rooms_name
@@ -535,11 +657,6 @@ class LLM:
             return "None."
 
         s = s[:-2] + f" {map_rel_to_pred[r]} the {self.goal_location}."
-        # if type(goal_location_room) is not list:
-        # 	s += f" in the {goal_location_room}."
-        # else:
-        # 	ss = ' or '.join([f'{room}' for room in goal_location_room])
-        # 	s += f", which may be in the {ss}."
         return s, f"{map_rel_to_pred[r]} the {self.goal_location}"
 
     def parse_answer(self, available_actions, text):
@@ -689,7 +806,6 @@ class LLM:
             action_history, dialogue_history, teammate_grabbed_objects, teammate_last_room, room_explored=None,
             steps=None):
         info = {}
-        # goal_desc = self.goal2description(unsatisfied_goal, goal_location_room)
         progress_desc = self.progress2text(current_room, grabbed_objects, unchecked_containers, ungrabbed_objects,
                                            goal_location_room, satisfied, teammate_grabbed_objects, teammate_last_room,
                                            room_explored, steps)
@@ -720,42 +836,100 @@ class LLM:
 
         prompt = prompt.replace('$AVAILABLE_ACTIONS$', available_plans)
 
-        if steps == 0:
-            print(f"base_prompt:\n{prompt}\n\n")
-        if self.debug:
-            logger.info(f"base_prompt:\n{prompt}\n\n")
-        for _ in range(3):
-            try:
-                outputs, usage = self.generator([{"role": "user", "content": prompt}] if self.chat else prompt,
-                                                self.sampling_params)
-                if outputs[0] != '{' and '{' in outputs:
-                    outputs = '{' + outputs.split('{')[1].strip()
-                    outputs = outputs.split('}')[0].strip() + '}'
-                outputs_json = json.loads(outputs)
-                output = outputs_json["action"]
-                thoughts = outputs_json["thoughts"]
-                break
-            except (JSONDecodeError, KeyError) as e:
-                print(outputs)
-                print(e)
-                self.llm_config.update({"seed": self.llm_config["seed"] + 1})
-                self.generator = self.lm_engine()
-                print("retrying...")
-
-                continue
+        # if steps == 0:
+        #     print(f"base_prompt:\n{prompt}\n\n")
+        # if self.debug:
+        #     logger.info(f"base_prompt:\n{prompt}\n\n")
+        # for _ in range(3):
+        #     try:
+        #         outputs, usage = self.generator([{"role": "user", "content": prompt}] if self.chat else prompt,
+        #                                         self.sampling_params)
+        #         if outputs[0] != '{' and '{' in outputs:
+        #             outputs = '{' + outputs.split('{')[1].strip()
+        #             outputs = outputs.split('}')[0].strip() + '}'
+        #         outputs_json = json.loads(outputs)
+        #         output = outputs_json["action"]
+        #         thoughts = outputs_json["thoughts"]
+        #         break
+        #     except (JSONDecodeError, KeyError) as e:
+        #         print(outputs)
+        #         print(e)
+        #         self.llm_config.update({"seed": self.llm_config["seed"] + 1})
+        #         self.generator = self.lm_engine()
+        #         print("retrying...")
+        #
+        #         continue
 
         # info['cot_usage'] = usage
-        logger.info(f"action_output: {output}")
-        if self.log_thoughts:
-            logger.info(f"thoughts: {thoughts}")
-        # logger.info(f"action_output: {output}, thoughts: {thoughts}\n")
+
+        # logger.info(f"action_output: {output}")
+        # if self.log_thoughts:
+        #     logger.info(f"thoughts: {thoughts}")
+
+
         plan = self.parse_answer(available_plans_list, output)
-        if self.debug:
-            logger.info(f"plan:\n{plan}")
+
+        # if self.debug:
+        #     logger.info(f"plan:\n{plan}")
         info.update({"num_available_actions": num,
                      "prompts": prompt,
                      "outputs": outputs,
                      "plan": plan,
                      "total_cost": self.total_cost})
+
         return plan, info
+
+    def get_runnable(self, current_room, grabbed_objects, satisfied, unchecked_containers, ungrabbed_objects, goal_location_room,
+            action_history, dialogue_history, teammate_grabbed_objects, teammate_last_room, room_explored=None,
+            steps=None):
+        info = {}
+        progress_desc = self.progress2text(current_room, grabbed_objects, unchecked_containers, ungrabbed_objects,
+                                           goal_location_room, satisfied, teammate_grabbed_objects, teammate_last_room,
+                                           room_explored, steps)
+        action_history_desc = ", ".join(action_history[-self.action_history_len:] if len(
+            action_history) > self.action_history_len else action_history)
+        dialogue_history_desc = '\n'.join(dialogue_history[-self.dialogue_history_len:] if len(
+            dialogue_history) > self.dialogue_history_len else dialogue_history)
+        prompt = self.prompt_template.replace('$GOAL$', self.goal_desc)
+        if self.organization_instructions is not None:
+            prompt = prompt.replace("$ORGANIZATION_INSTRUCTIONS$", self.organization_instructions)
+        prompt = prompt.replace('$PROGRESS$', progress_desc)
+        prompt = prompt.replace('$ACTION_HISTORY$', action_history_desc)
+        message = None
+        info.update({"goal": self.goal_desc,
+                     "progress": progress_desc,
+                     "action_history": action_history_desc,
+                     "dialogue_history_desc": dialogue_history_desc})
+        prompt = prompt.replace('$DIALOGUE_HISTORY$', dialogue_history_desc)
+
+        available_plans, num, available_plans_list = self.get_available_plans(grabbed_objects, unchecked_containers,
+                                                                              ungrabbed_objects, message, room_explored)
+        info['available_plans'] = available_plans_list
+        if num == 0 or (message is not None and num == 1):
+            print("Warning! No available plans!")
+            plan = None
+            info.update({"num_available_actions": num,
+                         "plan": None})
+            return plan, info
+
+        prompt = prompt.replace('$AVAILABLE_ACTIONS$', available_plans)
+
+        info.update({"num_available_actions": num,
+                     "prompts": prompt})
+
+        return info
+
+# write a Trace agent
+# a few ideas:
+# 1. Need to decide who to send message to, based on previous messages
+# 2. Need to act
+
+# communicate
+# - choose_person (a list of agents, past history, etc.)
+# - send_message
+# - terminate
+
+# act
+
+# decentralized action/control, if the agent outputs [wait], then we
 
