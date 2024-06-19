@@ -34,7 +34,7 @@ from collections import defaultdict
 
 import argparse
 
-def env_fn(env_id):
+def env_fn(env_id, env_task_set, executable_args, args):
     return UnityEnvironment(num_agents=args.agent_num,
                            max_episode_length=args.max_episode_length,
                            port_id=env_id,
@@ -51,16 +51,6 @@ def env_fn(env_id):
                                 'cameras': 'PERSON_FROM_BACK',
                                 'modality': 'normal'}
                            )
-
-def str2bool(value):
-    if isinstance(value, bool):
-        return value
-    if value.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif value.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 @dataclass
 class Config:
@@ -80,134 +70,23 @@ class Config:
     log_thoughts = True
     debug=False
 
-class TraceArena(object):
-    def __init__(self, max_number_steps, arena_id, env_fn, agent_fn, record_dir='out',
-                 debug=False, run_predefined_actions=False, comm=False, args=None):
-        # skipped some initialization
-
-        print("Init Env")
-        self.env = env_fn(arena_id)
-        self.converse_agents = []
-        self.comm_cost_info = {
-            "converse": {"overall_tokens": 0, "overall_times": 0},
-            "select": {"tokens_in": 0, "tokens_out": 0}
-        }
-
-        self.max_episode_length = self.env.max_episode_length
-        self.max_number_steps = max_number_steps
-        self.run_predefined_actions = run_predefined_actions
-        atexit.register(self.close)
-
-        self.dict_info = {}
-        self.dict_dialogue_history = defaultdict(list)
-        self.LLM_returns = {}
-
-        self.arena_id = arena_id
-        self.env_fn = env_fn
-        self.agent_names = ["Agent_{}".format(i+1) for i in range(len(agent_fn))]
-
-    def close(self):
-        self.env.close()
-
-    def get_port(self):
-        return self.env.port_number
-
-    def reset_env(self):
-        self.env.close()
-        self.env = self.env_fn(self.arena_id)
-
-    def reset(self, task_id=None, reset_seed=None):
-        self.cnt_duplicate_subgoal = 0
-        self.cnt_nouse_subgoal = 0
-        self.dict_info = {}
-        self.dict_dialogue_history = defaultdict(list)
-        self.LLM_returns = {}
-        self.converse_agents = []
-        self.comm_cost_info = {
-                    "converse": {"overall_tokens": 0, "overall_times": 0},
-                    "select": {"tokens_in": 0, "tokens_out": 0}
-                }
-        for i in range(self.num_agents):
-            # reset conversable agents
-            pass
-
-        ob = None
-        while ob is None:
-            ob = self.env.reset(task_id=task_id, reset_seed=reset_seed)
-
-        for it, agent in enumerate(self.agents):
-            agent.reset(ob[it], self.env.all_containers_name, self.env.all_goal_objects_name, self.env.all_room_name, self.env.room_info, self.env.goal_spec[it])
-
-    def get_actions(self, obs, action_space=None, true_graph=False):
-        dict_actions = {}
-
-        # allow discussion
-        if self.comm:
-            pass
-
-        logger.info('Actions at step {}'.format(self.env.steps))
-        for it, agent in enumerate(self.agents):
-            if self.task_goal is None:
-                goal_spec = self.env.get_goal(self.env.task_goal[it], self.env.agent_goals[it])
-            else:
-                goal_spec = self.env.get_goal(self.task_goal[it], self.env.agent_goals[it])
-
-            # for the LLM agent
-            obs = self.env.get_observations()
-            # TODO: how should we handle dialog history?
-            dict_actions[it], self.dict_info[it] = agent.get_action(obs[it], goal_spec,
-                                                                    dialogue_history=self.dict_dialogue_history[
-                                                                        self.agent_names[it]])
-
-        return dict_actions, self.dict_info
-
-    def step(self, true_graph=False):
-        if self.env.steps == 0:
-            pass
-        obs = self.env.get_observations()
-        action_space = self.env.get_action_space()
-        dict_actions, dict_info = self.get_actions(obs, action_space, true_graph=true_graph)
-
-        for i in range(len(dict_info)):
-            if len(dict_info) > 1 and 'subgoals' in dict_info[i]:
-                dup = self.env.check_subgoal(dict_info[i]['subgoals'])
-                self.cnt_nouse_subgoal += dup
-                if i == 0 and 'subgoals' in dict_info[i + 1].keys() and dict_info[i]['subgoals'] == dict_info[i + 1]['subgoals']:
-                    self.cnt_duplicate_subgoal += 1
-        try:
-            step_info = self.env.step(dict_actions)
-        except Exception as e:
-            print("Exception occurs when performing action: ", dict_actions)
-            raise Exception
-        return step_info, dict_actions, dict_info
-
-    def run(self, random_goal=False, pred_goal=None, cnt_subgoal_info = False):
-        # run till the end of episode...
-        while True:
-            (obs, reward, done, infos, messages), actions, agent_info = self.step()
-        pass
-
-
 """
 Goal:
 High-level wrappers to take steps in the environment
 Return text observations for each agent, and reward and stuff
+
+Check:
+1. Write the communication function
 """
 
 class TraceVirtualHome:
     def __init__(self, max_number_steps, run_id, env_fn, agent_fn, num_agents, record_dir='out', debug=False, run_predefined_actions=False, comm=False, args=None):
         print("Init Env")
-        self.env = env_fn(run_id)
         self.converse_agents = []
         self.comm_cost_info = {
             "converse": {"overall_tokens": 0, "overall_times": 0},
             "select": {"tokens_in": 0, "tokens_out": 0}
         }
-
-        self.max_episode_length = self.env.max_episode_length
-        self.max_number_steps = max_number_steps
-        self.run_predefined_actions = run_predefined_actions
-        atexit.register(self.close)
 
         self.dict_info = {}
         self.dict_dialogue_history = defaultdict(list)
@@ -216,6 +95,9 @@ class TraceVirtualHome:
         self.arena_id = run_id
         self.env_fn = env_fn
         self.agent_names = ["Agent_{}".format(i + 1) for i in range(len(agent_fn))]
+
+        self.prompt_template_path = args.prompt_template_path
+        self.organization_instructions = args.organization_instructions
 
         env_task_set = pickle.load(open(args.dataset_path, 'rb'))
         logging.basicConfig(format='%(asctime)s - %(name)s:\n %(message)s', level=logging.INFO)
@@ -238,11 +120,28 @@ class TraceVirtualHome:
                 'no_graphics': False,
                 'timeout_wait': 5000,
             }
+        else:
+            executable_args = {
+                'file_name': args.executable_file,
+                'no_graphics': True,
+                'timeout_wait': 500,
+            }
 
-        env = env_fn(run_id)
+        self.executable_args = executable_args
+        self.args = args
+        self.env_task_set = env_task_set
+
+        env = env_fn(run_id, env_task_set, executable_args, args)
         self.env = env
+        self.max_episode_length = self.env.max_episode_length
+        self.max_number_steps = max_number_steps
+        self.run_predefined_actions = run_predefined_actions
+        atexit.register(self.close)
+
         self.agents = []
         self.num_agents = num_agents
+
+        self.dialogue_history_len = 30
 
         for i in range(self.num_agents):
             self.agents.append(virtualhome_agent.LLM_agent(agent_id=i + 1, args=args))
@@ -273,16 +172,22 @@ class TraceVirtualHome:
         # return observation required for planning
         obs = self.env.get_observations()
         agent_goal_specs = {}
-        agent_obs = {}
+        agent_goal_descs = {}
+        agent_infos = {}
+        agent_obs_descs = {}
+        agent_obs = obs
 
         for it in range(self.num_agents):
             goal_spec = self.env.get_goal(self.env.task_goal[it], self.env.agent_goals[it])
             agent_goal_specs[it] = goal_spec
+            info = self.agents[it].obs_processing(obs[it], goal_spec)
 
-            agent_obs[it] = self.agents[it].get_obs_forLLM_plan()
+            agent_obs_descs[it] = self.agents[it].get_obs_forLLM_plan()
+            agent_infos[it] = info
+            agent_goal_descs[it] = agent.LLM.goal_desc
 
         # use these two, we can generate plans...
-        return agent_obs, agent_goal_specs
+        return agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos
 
     def close(self):
         self.env.close()
@@ -292,7 +197,7 @@ class TraceVirtualHome:
 
     def reset_env(self):
         self.env.close()
-        self.env = self.env_fn(self.arena_id)
+        self.env = env_fn(self.arena_id, self.env_task_set, self.executable_args, self.args)
 
     def env_step(self, dict_actions):
         try:
@@ -302,28 +207,86 @@ class TraceVirtualHome:
             raise Exception
 
         return step_info
-    def step(self, plans, a_infos, LM_times):
+
+    def prep_discussion(self, agent_obs):
+        df = pd.read_csv(self.prompt_template_path)
+        prompt_format = df['prompt'][1]
+        selector_prompts = []
+
+        # init / truncate dialogue_history
+        for it, agent in enumerate(self.agents):
+            if self.dict_dialogue_history[self.agent_names[it]] != []:
+                if len(self.dict_dialogue_history[self.agent_names[it]]) > self.dialogue_history_len:
+                    self.dict_dialogue_history[self.agent_names[it]] = self.dict_dialogue_history[self.agent_names[it]][
+                                                                       -self.dialogue_history_len:]
+                dialogue_history = [word for dialogue in self.dict_dialogue_history[self.agent_names[it]] for word in
+                                    dialogue]
+            else:
+                dialogue_history = []
+
+            goal_desc = agent.LLM.goal_desc
+            action_history = self.agents[it].action_history
+            action_history = ", ".join(action_history[-10:] if len(action_history) > 10 else action_history)
+
+            goal_spec = self.env.get_goal(self.env.task_goal[it], self.env.agent_goals[it])
+
+            _ = self.agents[it].obs_processing(agent_obs[it], goal_spec)
+            progress = self.agents[it].progress2text()
+
+            teammate_names = self.agent_names[:it] + self.agent_names[it + 1:]
+            selector_prompt = prompt_format.replace("$AGENT_NAME$", self.agent_names[it])
+            selector_prompt = selector_prompt.replace("$ORGANIZATION_INSTRUCTIONS$", self.organization_instructions)
+            selector_prompt = selector_prompt.replace("$TEAMMATE_NAME$", ", ".join(teammate_names))
+            selector_prompt = selector_prompt.replace("$GOAL$", str(goal_desc))
+            selector_prompt = selector_prompt.replace("$PROGRESS$", str(progress))
+            selector_prompt = selector_prompt.replace("$ACTION_HISTORY$", str(action_history))
+            selector_prompt = selector_prompt.replace("$DIALOGUE_HISTORY$", str('\n'.join(dialogue_history)))
+            selector_prompts.append(selector_prompt)
+
+        return selector_prompts
+
+    def communicate(self, agents):
+        # 3 agents
+        # each of them sees own observation
+        # send_to_agent(agent1), return {agent_name, message_to_send}
+        # 1 round of message sending.
+        pass
+
+    def step(self, plans, agent_infos, LM_times):
         """
-        plans: {agent_id: plan}
-        a_infos: {agent_id: info}
+        plans: {agent_id: plan} (can be generated by a trace agent)
+        agent_infos: {agent_id: info}
         LM_times: {agent_id: time}
+        dict_dialogue_history: {agent_name: dialogue_history}
 
         Get raw obs from env, turn into text obs
+        and reward, and terminate
         """
         if self.env.steps == 0:
             pass
 
         dict_actions = {}
 
+        # self.dict_dialogue_history[self.agent_names[it]]
+
         for it, agent in enumerate(self.agents):
-            dict_actions[it], self.dict_info[it] = agent.get_action(plans[it], a_infos[it], LM_times[it],
-                                                                    dialogue_history=self.dict_dialogue_history[
-                                                                        self.agent_names[it]])
+            dict_actions[it], self.dict_info[it] = agent.get_action(plans[it], agent_infos[it], LM_times[it],
+                                                                    dialogue_history=self.dict_dialogue_history)
 
         step_info = self.env_step(dict_actions)
+        #  (obs, reward, done, env_info) = step_info
 
         return step_info, dict_actions, self.dict_info
 
+# 3 agents
+# each of them sees own observation
+# send_to_agent(agent1), return {agent_name, message_to_send}
+# 1 round of message sending.
+
+# static one
+# can call the OAI to select the agent
+
+# simple version -- optimize the prompt
 
 """
 1. An arena to coordinate all agents, reset all of them, take centralized step
@@ -346,8 +309,5 @@ def act():
 """
 
 if __name__ == '__main__':
-
     args = Config()
-
-
 
