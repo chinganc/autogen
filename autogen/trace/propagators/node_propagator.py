@@ -17,7 +17,7 @@ class NodeFeedback(AbstractFeedback):
             self.user_feedback is None and other.user_feedback is None
         ), "One of the user feedback should not be None."
         if self.user_feedback is None or other.user_feedback is None:
-            user_feedback = self.user_feedback or other.user_feedback
+            user_feedback = self.user_feedback if other.user_feedback is None else other.user_feedback
         else:  # both are not None
             assert self.user_feedback == other.user_feedback, "user feedback should be the same for all children"
             user_feedback = self.user_feedback
