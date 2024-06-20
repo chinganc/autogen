@@ -1,4 +1,4 @@
-# 🎸 Overview
+# Overview
 
 ## Trace 
 
