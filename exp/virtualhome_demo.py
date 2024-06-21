@@ -1,6 +1,8 @@
 import sys
 import os
 
+import re
+
 # manually append the path
 sys.path.append("/piech/u/anie/Organized-LLM-Agents/envs/cwah")
 sys.path.append("/piech/u/anie/Organized-LLM-Agents/envs")
@@ -252,7 +254,8 @@ class TraceVirtualHome:
         # 1 round of message sending.
         pass
 
-    def step(self, plans, agent_infos, LM_times, agent_obs, agent_goal_specs):
+    def step(self, plans, agent_infos, LM_times, agent_obs, agent_goal_specs,
+             prev_agent_obs_desc, sticky_action=True):
         """
         The only thing we need from Trace agent is
         plans and LM_times
@@ -264,6 +267,8 @@ class TraceVirtualHome:
 
         Get raw obs from env, turn into text obs
         and reward, and terminate
+
+        The prompt will change because it will say it's the step 2 or something...
         """
         if self.env.steps == 0:
             pass
@@ -272,20 +277,66 @@ class TraceVirtualHome:
 
         # self.dict_dialogue_history[self.agent_names[it]]
 
-        for it, agent in enumerate(self.agents):
-            dict_actions[it], self.dict_info[it] = agent.get_action(plans[it], agent_infos[it], LM_times[it],
-                                                                    agent_obs[it], agent_goal_specs[it],
-                                                                    dialogue_history=self.dict_dialogue_history)
+        # if neither agent's observation text is changing, we execute the same action
+        # until it changes (sticky_action)
 
-        step_info = self.env_step(dict_actions)
-        #  (obs, reward, done, infos, messages) = step_info
-        # obs is None by default for Unity env
-        obs = self.env.get_observations()
-        step_info = [obs, step_info[1], step_info[2], step_info[3], step_info[4]]
+        # TODO: need to produce feedback / reward if the plan/action is invalid
+        # but this is not the most major issue because invalid actions shouldn't be listed as an action
 
-        agent_obs_descs = {}
-        for it in range(len(self.agents)):
-            agent_obs_descs[it] = self.agents[it].get_obs_forLLM_plan()
+        # we set it to -1 reward if the action is invalid
+        max_sticky_steps = 10
+        while max_sticky_steps > 0:
+            for it, agent in enumerate(self.agents):
+                dict_actions[it], self.dict_info[it] = agent.get_action(plans[it], agent_infos[it], LM_times[it],
+                                                                        agent_obs[it], agent_goal_specs[it],
+                                                                        dialogue_history=self.dict_dialogue_history)
+            step_info = self.env_step(dict_actions)
+            # determine if both agents are seeing the same
+
+            #  (obs, reward, done, infos, messages) = step_info
+            # obs is None by default for Unity env
+            obs = self.env.get_observations()
+            step_info = [obs, step_info[1], step_info[2], step_info[3], step_info[4]]
+            agent_obs, reward, done, infos, messages = step_info
+            if done:
+                break
+
+            # we explicitly process it before generating the description
+            for it in range(len(self.agents)):
+                self.agents[it].obs_processing(agent_obs[it], agent_goal_specs[it])
+
+            agent_obs_descs = {}
+            for it in range(len(self.agents)):
+                agent_obs_descs[it] = self.agents[it].get_obs_forLLM_plan()
+
+            # compare progress text with the original one (where we started)
+            # compare the available actions
+            # if both are the same, we continue without getting back to the LLM Agent
+            break_loop = False
+            for it in range(len(self.agents)):
+                text = prev_agent_obs_desc[it]['prompts']
+                pattern = r'(step \d+)'
+                text = re.sub(pattern, f'step X', text)
+                pattern = r'Progress:.*|Available actions:.*(?:\n.*\w.*)+'
+                matches = re.findall(pattern, text)
+
+                new_text = agent_obs_descs[it]['prompts']
+                pattern = r'(step \d+)'
+                new_text = re.sub(pattern, f'step X', new_text)
+                pattern = r'Progress:.*|Available actions:.*(?:\n.*\w.*)+'
+                new_matches = re.findall(pattern, new_text)
+
+                print("obs progress: ", new_matches[0])
+
+                if matches != new_matches:
+                    break_loop = True
+                    break
+
+            if break_loop:
+                break
+
+            max_sticky_steps -= 1
+            print("Performing the same action again...stikcy counter is: ", max_sticky_steps)
 
         return step_info, agent_obs_descs, dict_actions, self.dict_info
 
@@ -317,6 +368,13 @@ that supports high-level actions
 def act():
     #plan()
     #discuss()
+"""
+
+"""
+Steps:
+Let's first have an agent that just acts...without communication
+
+Q: when does "send_message" occur as an option for the agent?
 """
 
 if __name__ == '__main__':

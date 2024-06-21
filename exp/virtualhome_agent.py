@@ -356,8 +356,13 @@ class LLM_agent:
 
         if self.plan.startswith('[goexplore]'):
             action = self.goexplore(LM_times)
+            # if already in the room
+            # plan is set to None
+            # action is set to None
         elif self.plan.startswith('[gocheck]'):
             action = self.gocheck()
+            # if the container is already open
+            # then action, and plan will both be None
         elif self.plan.startswith('[gograb]'):
             action = self.gograb()
         elif self.plan.startswith('[goput]'):
@@ -369,6 +374,15 @@ class LLM_agent:
             action = None
         else:
             raise ValueError(f"unavailable plan {self.plan}")
+
+        if self.plan is None and action is None:
+            # this is actually a hidden "retry" condition from the original code
+            # we shouldn't be here if we explicitly add a pre-check (action needs to come from the available actions)
+
+            # one condition is -- if the agent enters a new room, goexplore force the agent to wait one turn
+            self.plan = f"[wait]"
+            action = None
+            # import pdb; pdb.set_trace()
 
         self.action_history.append(action if action is not None else self.plan)
 

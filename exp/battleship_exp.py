@@ -99,14 +99,14 @@ def run(args):
         @bundle(trainable=True)
         def act(self, map, plan):
             """
-            Given a map, select a target coordinate in a Battleship game. In map, O denotes misses, X denotes successes, and . denotes unknown positions.
+            Given a map, select a target coordinate in a game. In map, O denotes misses, X denotes successes, and . denotes unknown positions.
             """
-            return
+            return [0, 0]
 
         @bundle(trainable=True)
-        def reason(self, map) -> str:
+        def reason(self, map):
             """
-            Given a map, analyze the board in a Battleship game. In map, O denotes misses, X denotes successes, and . denotes unknown positions.
+            Given a map, analyze the board in a game. In map, O denotes misses, X denotes successes, and . denotes unknown positions.
             """
             return [0, 0]
 
@@ -176,8 +176,8 @@ def run(args):
                 writer.flush()
             except Exception:
                 pass
-            i += 1
 
+        i += 1
         pickle.dump(log, open(f"{args.logdir}/log.pkl", "wb"))
 
     rewards = np.array(rewards)
