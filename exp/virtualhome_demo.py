@@ -56,25 +56,6 @@ def env_fn(env_id, env_task_set, executable_args, args):
                             )
 
 
-@dataclass
-class Config:
-    agent_num = 2
-    max_episode_length = 250
-    use_editor = False
-    base_port = None
-    seed = 1
-    gen_video = True
-    record_dir = ""
-    mode = 'test'
-
-    dataset_path = '/piech/u/anie/Organized-LLM-Agents/envs/cwah/dataset/test_env_set_help.pik'
-    obs_type = "partial"
-    executable_file = "/piech/u/anie/Organized-LLM-Agents/envs/executable/linux_exec.v2.2.4.x86_64"
-
-    log_thoughts = True
-    debug = False
-
-
 """
 Goal:
 High-level wrappers to take steps in the environment
@@ -431,6 +412,25 @@ def rollout(env, agent, config, horizon=50):
             break
 
     return rewards
+
+
+@dataclass
+class Config:
+    agent_num = 2
+    max_episode_length = 250
+    use_editor = False
+    base_port = None
+    seed = 1
+    gen_video = True
+    record_dir = ""
+    mode = 'test'
+
+    dataset_path = '/piech/u/anie/Organized-LLM-Agents/envs/cwah/dataset/test_env_set_help.pik'
+    obs_type = "partial"
+    executable_file = "/piech/u/anie/Organized-LLM-Agents/envs/executable/linux_exec.v2.2.4.x86_64"
+
+    log_thoughts = True
+    debug = False
 
 
 if __name__ == '__main__':
