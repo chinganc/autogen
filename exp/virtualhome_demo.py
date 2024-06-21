@@ -36,28 +36,30 @@ from collections import defaultdict
 
 import argparse
 
+
 def env_fn(env_id, env_task_set, executable_args, args):
     return UnityEnvironment(num_agents=args.agent_num,
-                           max_episode_length=args.max_episode_length,
-                           port_id=env_id,
-                           env_task_set=env_task_set,
-                           agent_goals=['LLM' for i in range(args.agent_num)],
-                           observation_types=[args.obs_type for i in range(args.agent_num)],
-                           use_editor=args.use_editor,
-                           executable_args=executable_args,
-                           base_port=args.base_port if args.base_port is not None else np.random.randint(11000, 13000),
-                           seed=args.seed,
-                           recording_options={'recording': True if args.gen_video else False,
-                                'output_folder': args.record_dir,
-                                'file_name_prefix': args.mode,
-                                'cameras': 'PERSON_FROM_BACK',
-                                'modality': 'normal'}
-                           )
+                            max_episode_length=args.max_episode_length,
+                            port_id=env_id,
+                            env_task_set=env_task_set,
+                            agent_goals=['LLM' for i in range(args.agent_num)],
+                            observation_types=[args.obs_type for i in range(args.agent_num)],
+                            use_editor=args.use_editor,
+                            executable_args=executable_args,
+                            base_port=args.base_port if args.base_port is not None else np.random.randint(11000, 13000),
+                            seed=args.seed,
+                            recording_options={'recording': True if args.gen_video else False,
+                                               'output_folder': args.record_dir,
+                                               'file_name_prefix': args.mode,
+                                               'cameras': 'PERSON_FROM_BACK',
+                                               'modality': 'normal'}
+                            )
+
 
 @dataclass
 class Config:
-    agent_num=2
-    max_episode_length=250
+    agent_num = 2
+    max_episode_length = 250
     use_editor = False
     base_port = None
     seed = 1
@@ -70,7 +72,8 @@ class Config:
     executable_file = "/piech/u/anie/Organized-LLM-Agents/envs/executable/linux_exec.v2.2.4.x86_64"
 
     log_thoughts = True
-    debug=False
+    debug = False
+
 
 """
 Goal:
@@ -81,8 +84,10 @@ Check:
 1. Write the communication function
 """
 
+
 class TraceVirtualHome:
-    def __init__(self, max_number_steps, run_id, env_fn, agent_fn, num_agents, record_dir='out', debug=False, run_predefined_actions=False, comm=False, args=None):
+    def __init__(self, max_number_steps, run_id, env_fn, agent_fn, num_agents, record_dir='out', debug=False,
+                 run_predefined_actions=False, comm=False, args=None):
         print("Init Env")
         self.converse_agents = []
         self.comm_cost_info = {
@@ -283,6 +288,9 @@ class TraceVirtualHome:
         # TODO: need to produce feedback / reward if the plan/action is invalid
         # but this is not the most major issue because invalid actions shouldn't be listed as an action
 
+        # TODO: find where the actual target is...and simulate a success agent (as human)
+        # TODO: to test if this interface works end-to-end
+
         # we set it to -1 reward if the action is invalid
         max_sticky_steps = 10
         while max_sticky_steps > 0:
@@ -340,6 +348,7 @@ class TraceVirtualHome:
 
         return step_info, agent_obs_descs, dict_actions, self.dict_info
 
+
 # 3 agents
 # each of them sees own observation
 # send_to_agent(agent1), return {agent_name, message_to_send}
@@ -377,6 +386,69 @@ Let's first have an agent that just acts...without communication
 Q: when does "send_message" occur as an option for the agent?
 """
 
+
+class RandomAgent:
+    def __init__(self):
+        pass
+
+    def extract_available_actions(self, text):
+        # Define the regex pattern to extract available actions without the letter
+        pattern = r'[A-Z]\. (.+)'
+
+        # Find all matches
+        matches = re.findall(pattern, text)
+
+        return matches
+
+    def act(self, obs):
+        # obs: text observation
+        available_actions = self.extract_available_actions(obs)
+        return random.choice(available_actions)
+
+
+def rollout(env, agent, config, horizon=50):
+    # plans = {
+    #     0: "[gocheck] <kitchencabinet> (74)",
+    #     1: "[goexplore] <kitchen> (172)"
+    # }
+
+    LM_times = {
+        0: 0,
+        1: 0
+    }
+
+    agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = env.reset()
+    rewards = []
+
+    for _ in range(horizon):
+        plans = agent.act(agent_obs_descs)
+        step_info, agent_obs_descs, dict_actions, dict_info = env.step(plans, agent_infos, LM_times, agent_obs,
+                                                                       agent_goal_specs, agent_obs_descs)
+        agent_obs, reward, done, infos, messages = step_info
+        rewards.append(reward)
+
+        if done:
+            break
+
+    return rewards
+
+
 if __name__ == '__main__':
     args = Config()
+    args.comm = False
 
+    args.prompt_template_path = "/piech/u/anie/Organized-LLM-Agents/envs/cwah/LLM/prompt_multi_comm.csv"
+    args.organization_instructions = "/piech/u/anie/Organized-LLM-Agents/envs/cwah/testing_agents/organization_instructions.csv"
+
+    args.action_history_len = 20
+    args.dialogue_history_len = 30
+
+    max_number_steps = 250
+    run_id = 0
+    agent_fn = [0] * 2
+    num_agents = 2
+
+    agent = RandomAgent()
+    env = TraceVirtualHome(max_number_steps, run_id, env_fn, agent_fn, num_agents, args=args)
+
+    rollout(env, agent, args, horizon=20)

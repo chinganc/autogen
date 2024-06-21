@@ -58,20 +58,22 @@ def load_optimizer_results(name):
 
     # loop through all directories under a directory
     # use os.listdir(f"battleship_results/{name}/")
-    max_len = 21
-    for folder in os.listdir(f"battleship_results/{name}"):
+    # max_len = 21
+    max_len = 10
+    for folder in os.listdir(f"battleship_results3/{name}"):
         # loop through all files in the directory
         file = "log.pkl"
-        with open(f"battleship_results/{name}/{folder}/{file}", "rb") as f:
+        with open(f"battleship_results3/{name}/{folder}/{file}", "rb") as f:
             log = pickle.load(f)
-            step_eval_mean = [np.mean(np.array(r) * 25 / 17) for r in log['returns']] #
+            # import pdb; pdb.set_trace()
+            step_eval_mean = [np.mean(np.array(r) * 12 / 12) for r in log['returns']]  # per training step, we eval
             optimizer_results.append(step_eval_mean)
             max_len = max(max_len, len(step_eval_mean))
 
-        scores = pickle.load(open(f"battleship_results/{name}/{folder}/random_policy_scores.pkl", "rb"))
-        scores = (np.array(scores))#.mean() # * 25 / 17
+        scores = pickle.load(open(f"battleship_results3/{name}/{folder}/random_policy_scores.pkl", "rb"))
+        scores = (np.array(scores)) #.mean() # * 25 / 12
         random_policy_results.append(scores)
-        scores = pickle.load(open(f"battleship_results/{name}/{folder}/enumeration_scores.pkl", "rb"))
+        scores = pickle.load(open(f"battleship_results3/{name}/{folder}/enumeration_scores.pkl", "rb"))
         scores = (np.array(scores))#.mean() #
         enumeration_policy_results.append(scores)
 
@@ -130,14 +132,20 @@ if __name__ == '__main__':
     results = {}
     name = "FunctionOptimizerV2Memory_mem0"
     optimizer_results, base_results = load_optimizer_results(name)
+    base_policy_results = {}
+    base_policy_results['Enumeration'] = base_results[1]
+
     print(optimizer_results.max())
     results["Trace"] = optimizer_results
     name = "OPRO_mem0"
     optimizer_results, base_results = load_optimizer_results(name)
-    results["OPRO"] = optimizer_results
+    results["OPRO"] = optimizer_results  # 10 seeds, 20 evals
 
-    base_policy_results = {}
-    base_policy_results['Enumeration'] = base_results[1]
+    print(results)
+
+    print(base_results[1])
+    print(base_results[1].shape)  # 10 seeds, 20 evals
+
     # base_policy_results['Random'] = base_results[0]
 
     plot_optimizer_results(results, base_policy_results)

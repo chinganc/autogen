@@ -45,9 +45,13 @@ def eval_policy(policy, args):
     np.random.seed(args.seed)
     scores = []
     for _ in range(args.n_eval_episodes):
-        board_width = np.random.randint(args.board_size, int(2 * args.board_size))
-        board_height = np.random.randint(args.board_size, int(2 * args.board_size))
-        horizon = board_width * board_height
+        # board_width = np.random.randint(args.board_size, int(2 * args.board_size))
+        # board_height = np.random.randint(args.board_size, int(2 * args.board_size))
+        # horizon = board_width * board_height
+        board_width = args.board_size
+        board_height = args.board_size
+        horizon = (board_width * board_height) // 2
+
         policy.init(board_width, board_height)
         rewards = rollout(policy, board_width, board_height, args.num_each_type, args.exclude_ships, horizon)
         scores.append(rewards.mean())
@@ -60,8 +64,6 @@ def run(args):
     # Seeding
     random.seed(args.seed)
     np.random.seed(args.seed)
-
-    GRAPH.clear()
 
     # init variable
     # Given a map, select a valid coordinate to earn reward.
@@ -91,24 +93,24 @@ def run(args):
 
         def select_coordinate(self, map):
             plan = self.reason(map)
-
-            act = self.act
-            output = act(map, plan)
+            output = self.act(map, plan)
             return output
 
         @bundle(trainable=True)
         def act(self, map, plan):
             """
-            Given a map, select a target coordinate in a game. In map, O denotes misses, X denotes successes, and . denotes unknown positions.
+            Given a map, select a target coordinate in a game.
+            X denotes hits, O denotes misses, and . denotes unknown positions.
             """
-            return [0, 0]
+            return
 
         @bundle(trainable=True)
         def reason(self, map):
             """
-            Given a map, analyze the board in a game. In map, O denotes misses, X denotes successes, and . denotes unknown positions.
+            Given a map, analyze the board in a game.
+            X denotes hits, O denotes misses, and . denotes unknown positions.
             """
-            return [0, 0]
+            return
 
     policy = Policy2()
 
@@ -140,6 +142,9 @@ def run(args):
     obs = node(board.get_shots())  # init observation
     i = 0
     while i < args.max_calls:
+        GRAPH.clear()
+
+        print("Iteration", i)
         try:
             output = policy.select_coordinate(obs)
             obs, reward, terminal, feedback = user_fb_for_placing_shot(board, output.data)  # not traced
@@ -170,6 +175,10 @@ def run(args):
                 returns = eval_policy(policy, args)
                 log["returns"].append(returns)
                 log["instant reward"].append(reward)
+                log['parameters'] = {'reason': '', 'act': ''}
+                log['parameters']['reason'] = policy.parameters_dict['reason'].data
+                log['parameters']['act'] = policy.parameters_dict['act'].data
+
                 writer.add_scalar("Evaluation/mean score", returns.mean(), i + 1)  # i+1 to account for the initial log
                 writer.add_scalar("Training/instant reward", reward, i)
 
@@ -178,6 +187,7 @@ def run(args):
                 pass
 
         i += 1
+        policy.save(f"{args.logdir}/policy_epoch{i}.pkl")
         pickle.dump(log, open(f"{args.logdir}/log.pkl", "wb"))
 
     rewards = np.array(rewards)
@@ -214,13 +224,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--board_size", type=int, default=5)
     parser.add_argument("--num_each_type", type=int, default=1)
-    parser.add_argument("--exclude_ships", nargs="+", type=str, default=("C", "B"))
+    parser.add_argument("--exclude_ships", nargs="+", type=str, default=("C"))
     parser.add_argument("--visualize", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--max_calls", type=int, default=20)
+    parser.add_argument("--max_calls", type=int, default=10)
     parser.add_argument("--memory_size", type=int, default=0)
     parser.add_argument("--n_eval_episodes", type=int, default=100)
-    parser.add_argument("--logdir", type=str, default="battleship_results")
+    parser.add_argument("--logdir", type=str, default="battleship_results3")
     parser.add_argument("--optimizer", type=str, default="FunctionOptimizerV2Memory")
     args = parser.parse_args()
 

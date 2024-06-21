@@ -70,6 +70,49 @@ class Module(NodeContainer):
                 parameters[name] = attr.parameters_dict()
         return parameters
 
+    def save(self, file_name):
+        import pickle
+        import os
+        # detect if the directory exists
+        directory = os.path.dirname(file_name)
+        if directory != "":
+            os.makedirs(directory, exist_ok=True)
+
+        # if file_name does not have pkl extension, add it
+        if not file_name.endswith(".pkl"):
+            file_name += ".pkl"
+
+        instance_node_params = {}
+        for name, obj in self.__dict__.items():
+            if isinstance(obj, ParameterNode):
+                instance_node_params[name] = obj.data
+
+        for name, obj in self.parameters_dict().items():
+            instance_node_params[name] = obj.data
+
+        with open(file_name, "wb") as f:
+            pickle.dump(instance_node_params, f)
+
+    def load(self, file_name):
+        import pickle
+        if not file_name.endswith(".pkl"):
+            file_name += ".pkl"
+
+        with open(file_name, "rb") as f:
+            instance_node_params = pickle.load(f)
+
+        # need to check if parameter_dict() is still getting the same or not
+        for name, attr in inspect.getmembers(self):
+            if isinstance(attr, functools.partial):  # this is a method
+                method = attr.func.__self__
+                if callable(method) and hasattr(method, "parameter"):
+                    # for a FunModule, if the parameter is None, then it's not trainable
+                    if method.parameter is  not None:
+                        method.parameter._data = instance_node_params[name]
+            elif isinstance(attr, Node):
+                if attr.trainable:
+                    attr._data = instance_node_params[name]
+
 
 # TODO to test it and clean up the code
 def apply_op(op, output, *args, **kwargs):

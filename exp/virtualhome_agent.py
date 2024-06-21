@@ -54,11 +54,11 @@ class LLM_agent:
         self.agent_id = agent_id
         self.teammate_agent_id = [i + 1 for i in range(args.agent_num)]
         self.teammate_agent_id.remove(agent_id)
-        self.lm_id = args.lm_id_list[agent_id - 1]
-        self.llm_config = args.llm_config_list[agent_id - 1]
+        # self.lm_id = args.lm_id_list[agent_id - 1]
+        # self.llm_config = args.llm_config_list[agent_id - 1]
         self.prompt_template_path = args.prompt_template_path
         self.args = args
-        self.LLM = LLM(self.lm_id, self.prompt_template_path, self.args, self.agent_id, self.agent_names)
+        self.LLM = LLM(self.prompt_template_path, self.args, self.agent_id, self.agent_names)
 
         self.action_history = []
         self.dialogue_history = []
@@ -603,7 +603,6 @@ class ChatCompletionManager:
 
 class LLM:
     def __init__(self,
-                 lm_id,
                  prompt_template_path,
                  args,
                  agent_id,
@@ -635,8 +634,8 @@ class LLM:
                                                                                                     ", ".join(
                                                                                                         self.teammate_names))
 
-        self.lm_id = lm_id
-        self.chat = 'gpt-3.5-turbo' in lm_id or 'gpt-4' in lm_id or 'chat' in lm_id or 'human' in lm_id
+        # self.lm_id = lm_id
+        # self.chat = 'gpt-3.5-turbo' in lm_id or 'gpt-4' in lm_id or 'chat' in lm_id or 'human' in lm_id
         self.total_cost = 0
         self.all_actions = 0
         self.failed_actions = 0
