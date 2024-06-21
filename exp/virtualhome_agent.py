@@ -813,6 +813,8 @@ class LLM:
         for i, plan in enumerate(available_plans):
             plans += f"{chr(ord('A') + i)}. {plan}\n"
 
+        # TODO: add [send_message] action
+
         return plans, len(available_plans), available_plans
 
     def run(self, current_room, grabbed_objects, satisfied, unchecked_containers, ungrabbed_objects, goal_location_room,
