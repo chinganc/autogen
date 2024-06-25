@@ -10,8 +10,8 @@ from autogen.trace.optimizers import FunctionOptimizerV2Memory
 
 p1_name = trace.node('Alice', trainable=False)
 p2_name = trace.node('Bob', trainable=False)
-p1_prompt = trace.node('YOUR STRATEGIC RESOURCES: None', trainable=True)
-p2_prompt = trace.node('YOUR STRATEGIC RESOURCES: None', trainable=True)
+p1_prompt = trace.node('STOCKPILE THESE RESOURCES: N/A', trainable=True)
+p2_prompt = trace.node('STOCKPILE THESE RESOURCES: N/A', trainable=True)
 
 system_prompt = "RULES of the TRADING GAME between two players named "+p1_name.data+" and "+p2_name.data+".\n\n"
 system_prompt += "Each player's inventory is private and consists of three resources, WOOD, STONE, and GOLD.\n"
@@ -222,9 +222,12 @@ for i in range(10):
                 p1_name.data + f' has inventory with value of {p1_value} and ' + \
                 p2_name.data + f' has inventory with value of {p2_value}.\n'
     feedback += 'OVERALL SCORE: ' + str(result_value)
+    if result_value < 73:
+        feedback += '\nOVERALL SCORE is less than optimal. Find better trades to increase the OVERALL SCORE.'
 
-    print(p1_name, p1_prompt.data)
-    print(p2_name, p2_prompt.data)
+    print("ITERATION", i+1)
+    print(p1_name.data, p1_prompt.data)
+    print(p2_name.data, p2_prompt.data)
     print(feedback)
 
     optimizer.zero_feedback()
