@@ -301,11 +301,14 @@ class TraceVirtualHome:
                     teammate_name, teammate_agent_id, message = self.parse_send_message(dict_actions[it])
                     if teammate_name is not None:
                         # format of the message is: sender to receiver: message
-                        self.dict_dialogue_history[teammate_name].append(f"You send_message to {teammate_name}: {message}")
-                        self.dict_dialogue_history[self.agent_names[it]].append(f"{self.agent_names[it]} send_message to You: {message}")
+                        self.dict_dialogue_history[teammate_name].append(
+                            f"You send_message to {teammate_name}: {message}")
+                        self.dict_dialogue_history[self.agent_names[it]].append(
+                            f"{self.agent_names[it]} send_message to You: {message}")
                         # add to each agent's dialogue history
                         agent.dialogue_history.append(f"You send_message to {teammate_name}: {message}")
-                        self.agents[int(teammate_agent_id)-1].dialogue_history.append(f"{self.agent_names[it]} send_message to You: {message}")
+                        self.agents[int(teammate_agent_id) - 1].dialogue_history.append(
+                            f"{self.agent_names[it]} send_message to You: {message}")
 
                     dict_actions[it] = None  # action is none
                     break_loop = True  # we continue exchanging messages
@@ -360,6 +363,7 @@ class TraceVirtualHome:
 
         return step_info, agent_obs_descs, dict_actions, self.dict_info
 
+
 """
 1. An arena to coordinate all agents, reset all of them, take centralized step
 2. An agent that can send prompts
@@ -406,8 +410,63 @@ class RandomAgent:
         available_actions = self.extract_available_actions(obs)
         return random.choice(available_actions)
 
-def rollout(env, agent, config, horizon=50):
 
+import autogen
+from autogen.trace.bundle import bundle, trace_class, TraceExecutionError, node
+from textwrap import dedent
+from autogen.trace.nodes import node, GRAPH, ParameterNode
+
+class LLMCallable:
+    def __init__(self, config_list=None, max_tokens=1024, verbose=False):
+        if config_list is None:
+            config_list = autogen.config_list_from_json("OAI_CONFIG_LIST")
+        self.llm = autogen.OpenAIWrapper(config_list=config_list)
+        self.max_tokens = max_tokens
+        self.verbose = verbose
+
+    # @bundle(catch_execution_error=False)
+    def call_llm(self, user_prompt):
+        """
+        Sends the constructed prompt (along with specified request) to an LLM.
+        """
+        system_prompt = "You are a helpful assistant.\n"
+        if self.verbose not in (False, "output"):
+            print("Prompt\n", system_prompt + user_prompt)
+
+        messages = [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+
+        try:
+            response = self.llm.create(
+                messages=messages,
+                response_format={"type": "json_object"},
+            )
+        except Exception:
+            response = self.llm.create(messages=messages, max_tokens=self.max_tokens)
+        response = response.choices[0].message.content
+
+        if self.verbose:
+            print("LLM response:\n", response)
+        return response
+
+class TraceAgent(LLMCallable):
+    def __init__(self, verbose=False):
+        super().__init__(verbose=verbose)
+        self.organization_instructions = dedent("""Cooperate in a decentralized way.""")
+        self.organization_instructions = ParameterNode(self.organization_instructions, trainable=True,
+                                                       description="[ParameterNode] This dictates how the agent should interact with another agent on a high level.")
+
+    @bundle(catch_execution_error=False)
+    def act(self, obs, organization_instructions):
+        """
+        call the LLM to produce the next action for the agent
+        """
+        obs = obs.replace("$ORGANIZATION_INSTRUCTIONS$", organization_instructions)
+        response = self.call_llm(obs)
+        plan = json.loads(response)
+        return plan['action']
+
+
+def rollout(env, agent, config, horizon=50):
     LM_times = {
         0: 0,
         1: 0
