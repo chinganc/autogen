@@ -102,7 +102,7 @@ ships = {
 
 
 class BattleshipBoard(object):
-    def __init__(self, width, height, num_each_type=2, exclude_ships=[]):
+    def __init__(self, width, height, num_each_type=2, exclude_ships=[], init_with_one_hit=False):
         self.width = width
         self.height = height
         self.ships = {s: ships[s] for s in ships if s not in exclude_ships}
@@ -110,6 +110,19 @@ class BattleshipBoard(object):
         self.shots = [['.' for _ in range(width)] for _ in range(height)]
         self.hits = 0
         self.misses = 0
+
+        if init_with_one_hit:
+            # find a ship square and hit it
+            # reverse the traversal order
+            initialized = False
+            for row in range(height):
+                for col in range(width):
+                    if self.board[row][col] != '.':
+                        self.check_shot(row, col)
+                        initialized = True
+                        break
+                if initialized:
+                    break
 
     def get_life_points(self):
         return sum(self.ships.values())

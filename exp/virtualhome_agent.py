@@ -196,14 +196,16 @@ class LLM_agent:
     def get_obs_forLLM_plan(self):
         # this can be called...
         if len(self.grabbed_objects) == 2:
-                return f"[goput] {self.goal_location}", {}
+            return f"[goput] {self.goal_location}", {}
 
         return self.LLM.get_runnable(self.current_room, [self.id2node[x] for x in self.grabbed_objects], self.satisfied,
-                            self.unchecked_containers,
-                            self.ungrabbed_objects, self.id_inside_room[self.goal_location_id],
-                            self.action_history, self.dialogue_history, self.teammate_grabbed_objects,
-                            [self.id_inside_room[teammate_agent_id_item] for teammate_agent_id_item in
-                             self.teammate_agent_id], None, self.steps)
+                                     self.unchecked_containers,
+                                     self.ungrabbed_objects, self.id_inside_room[self.goal_location_id],
+                                     self.action_history, self.dialogue_history, self.teammate_grabbed_objects,
+                                     [self.id_inside_room[teammate_agent_id_item] for teammate_agent_id_item in
+                                      self.teammate_agent_id],
+                                     self.id_inside_room, self.teammate_agent_id,
+                                     None, self.steps)
 
     def check_progress(self, state, goal_spec):
         unsatisfied = {}
@@ -384,7 +386,10 @@ class LLM_agent:
             action = None
             # import pdb; pdb.set_trace()
 
-        self.action_history.append(action if action is not None else self.plan)
+        if action.startswith('[send_message]'):
+            self.action_history.append(action.split(":")[0])
+        else:
+            self.action_history.append(action if action is not None else self.plan)
 
         self.steps += 1
         info.update({"plan": self.plan})
@@ -783,7 +788,8 @@ class LLM:
 
         return f"This is step {steps}. " + s
 
-    def get_available_plans(self, grabbed_objects, unchecked_containers, ungrabbed_objects, message, room_explored):
+    def get_available_plans(self, grabbed_objects, unchecked_containers, ungrabbed_objects, message, room_explored,
+                            id_inside_room, teammate_agent_id, current_room):
         """
         [goexplore] <room>
         [gocheck] <container>
@@ -809,16 +815,25 @@ class LLM:
         if len(grabbed_objects) > 0:
             available_plans.append(f"[goput] {self.goal_location}")
 
+        # check if the other agent is in the same room, if so, add the plan to send message
+        if not self.single:
+            for i, teammate_name in enumerate(self.teammate_names):
+                if id_inside_room[teammate_agent_id[i]] == current_room['class_name']:
+                    available_plans.append(f"[send_message] <{teammate_name}> ({teammate_agent_id[i]}): Replace the text after colon as the actual message you want to send.")
+
         plans = ""
         for i, plan in enumerate(available_plans):
             plans += f"{chr(ord('A') + i)}. {plan}\n"
 
         # TODO: add [send_message] action
+        # [send_message] is processed by unity step and returned inside messages variable
 
         return plans, len(available_plans), available_plans
 
     def run(self, current_room, grabbed_objects, satisfied, unchecked_containers, ungrabbed_objects, goal_location_room,
-            action_history, dialogue_history, teammate_grabbed_objects, teammate_last_room, room_explored=None,
+            action_history, dialogue_history, teammate_grabbed_objects, teammate_last_room,
+            id_inside_room, teammate_agent_id,
+            room_explored=None,
             steps=None):
         info = {}
         progress_desc = self.progress2text(current_room, grabbed_objects, unchecked_containers, ungrabbed_objects,
@@ -841,7 +856,9 @@ class LLM:
         prompt = prompt.replace('$DIALOGUE_HISTORY$', dialogue_history_desc)
 
         available_plans, num, available_plans_list = self.get_available_plans(grabbed_objects, unchecked_containers,
-                                                                              ungrabbed_objects, message, room_explored)
+                                                                              ungrabbed_objects, message, room_explored,
+                                                                              id_inside_room, teammate_agent_id,
+                                                                              current_room)
         if num == 0 or (message is not None and num == 1):
             print("Warning! No available plans!")
             plan = None
@@ -881,7 +898,6 @@ class LLM:
         # if self.log_thoughts:
         #     logger.info(f"thoughts: {thoughts}")
 
-
         plan = self.parse_answer(available_plans_list, output)
 
         # if self.debug:
@@ -894,9 +910,12 @@ class LLM:
 
         return plan, info
 
-    def get_runnable(self, current_room, grabbed_objects, satisfied, unchecked_containers, ungrabbed_objects, goal_location_room,
-            action_history, dialogue_history, teammate_grabbed_objects, teammate_last_room, room_explored=None,
-            steps=None):
+    def get_runnable(self, current_room, grabbed_objects, satisfied, unchecked_containers, ungrabbed_objects,
+                     goal_location_room,
+                     action_history, dialogue_history, teammate_grabbed_objects, teammate_last_room,
+                     id_inside_room, teammate_agent_id,
+                     room_explored=None,
+                     steps=None):
         info = {}
         progress_desc = self.progress2text(current_room, grabbed_objects, unchecked_containers, ungrabbed_objects,
                                            goal_location_room, satisfied, teammate_grabbed_objects, teammate_last_room,
@@ -918,7 +937,8 @@ class LLM:
         prompt = prompt.replace('$DIALOGUE_HISTORY$', dialogue_history_desc)
 
         available_plans, num, available_plans_list = self.get_available_plans(grabbed_objects, unchecked_containers,
-                                                                              ungrabbed_objects, message, room_explored)
+                                                                              ungrabbed_objects, message, room_explored,
+                                                                              id_inside_room, teammate_agent_id, current_room)
         info['available_plans'] = available_plans_list
         if num == 0 or (message is not None and num == 1):
             print("Warning! No available plans!")
@@ -947,4 +967,3 @@ class LLM:
 # act
 
 # decentralized action/control, if the agent outputs [wait], then we
-

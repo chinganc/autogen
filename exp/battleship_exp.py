@@ -26,7 +26,10 @@ def user_fb_for_placing_shot(board, coords):
 
 
 def rollout(policy, board_width, board_height, num_each_type, exclude_ships, horizon):
-    board = BattleshipBoard(board_width, board_height, num_each_type=num_each_type, exclude_ships=exclude_ships)
+    # to better check if the heuristics work well
+    # we initialize with one hit
+    board = BattleshipBoard(board_width, board_height, num_each_type=num_each_type,
+                            exclude_ships=exclude_ships, init_with_one_hit=True)
     rewards = []
     obs = board.get_shots()  # init observation
     for i in range(horizon):

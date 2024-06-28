@@ -240,6 +240,22 @@ class TraceVirtualHome:
         # 1 round of message sending.
         pass
 
+    def parse_send_message(self, input_string):
+        # Define the regex pattern
+        pattern = r'\[send_message\] <(?P<teammate_name>.*?)> \((?P<teammate_agent_id>.*?)\): (?P<message>.*)'
+
+        # Search for the pattern in the input string
+        match = re.search(pattern, input_string)
+
+        # Check if the pattern was found and extract the groups
+        if match:
+            teammate_name = match.group('teammate_name')
+            teammate_agent_id = match.group('teammate_agent_id')
+            message = match.group('message')
+            return teammate_name, teammate_agent_id, message
+        else:
+            return None, None, None
+
     def step(self, plans, agent_infos, LM_times, agent_obs, agent_goal_specs,
              prev_agent_obs_desc, sticky_action=True):
         """
@@ -266,19 +282,34 @@ class TraceVirtualHome:
         # if neither agent's observation text is changing, we execute the same action
         # until it changes (sticky_action)
 
-        # TODO: need to produce feedback / reward if the plan/action is invalid
-        # but this is not the most major issue because invalid actions shouldn't be listed as an action
-
-        # TODO: find where the actual target is...and simulate a success agent (as human)
-        # TODO: to test if this interface works end-to-end
-
         # we set it to -1 reward if the action is invalid
         max_sticky_steps = 10
         while max_sticky_steps > 0:
+
+            # sticky action option here
+            break_loop = False
+
             for it, agent in enumerate(self.agents):
                 dict_actions[it], self.dict_info[it] = agent.get_action(plans[it], agent_infos[it], LM_times[it],
                                                                         agent_obs[it], agent_goal_specs[it],
                                                                         dialogue_history=self.dict_dialogue_history)
+
+            # one round of message sending, we check if any agent chooses to send message
+            for it, agent in enumerate(self.agents):
+                if dict_actions[it].startswith('[send_message]'):
+                    # send message to the other agents
+                    teammate_name, teammate_agent_id, message = self.parse_send_message(dict_actions[it])
+                    if teammate_name is not None:
+                        # format of the message is: sender to receiver: message
+                        self.dict_dialogue_history[teammate_name].append(f"You send_message to {teammate_name}: {message}")
+                        self.dict_dialogue_history[self.agent_names[it]].append(f"{self.agent_names[it]} send_message to You: {message}")
+                        # add to each agent's dialogue history
+                        agent.dialogue_history.append(f"You send_message to {teammate_name}: {message}")
+                        self.agents[int(teammate_agent_id)-1].dialogue_history.append(f"{self.agent_names[it]} send_message to You: {message}")
+
+                    dict_actions[it] = None  # action is none
+                    break_loop = True  # we continue exchanging messages
+
             step_info = self.env_step(dict_actions)
             # determine if both agents are seeing the same
 
@@ -301,7 +332,7 @@ class TraceVirtualHome:
             # compare progress text with the original one (where we started)
             # compare the available actions
             # if both are the same, we continue without getting back to the LLM Agent
-            break_loop = False
+
             for it in range(len(self.agents)):
                 text = prev_agent_obs_desc[it]['prompts']
                 pattern = r'(step \d+)'
@@ -328,17 +359,6 @@ class TraceVirtualHome:
             print("Performing the same action again...stikcy counter is: ", max_sticky_steps)
 
         return step_info, agent_obs_descs, dict_actions, self.dict_info
-
-
-# 3 agents
-# each of them sees own observation
-# send_to_agent(agent1), return {agent_name, message_to_send}
-# 1 round of message sending.
-
-# static one
-# can call the OAI to select the agent
-
-# simple version -- optimize the prompt
 
 """
 1. An arena to coordinate all agents, reset all of them, take centralized step
@@ -386,12 +406,7 @@ class RandomAgent:
         available_actions = self.extract_available_actions(obs)
         return random.choice(available_actions)
 
-
 def rollout(env, agent, config, horizon=50):
-    # plans = {
-    #     0: "[gocheck] <kitchencabinet> (74)",
-    #     1: "[goexplore] <kitchen> (172)"
-    # }
 
     LM_times = {
         0: 0,
@@ -429,6 +444,8 @@ class Config:
     obs_type = "partial"
     executable_file = "/piech/u/anie/Organized-LLM-Agents/envs/executable/linux_exec.v2.2.4.x86_64"
 
+    organization_instructions = None
+
     log_thoughts = True
     debug = False
 
@@ -438,7 +455,6 @@ if __name__ == '__main__':
     args.comm = False
 
     args.prompt_template_path = "/piech/u/anie/Organized-LLM-Agents/envs/cwah/LLM/prompt_multi_comm.csv"
-    args.organization_instructions = "/piech/u/anie/Organized-LLM-Agents/envs/cwah/testing_agents/organization_instructions.csv"
 
     args.action_history_len = 20
     args.dialogue_history_len = 30
