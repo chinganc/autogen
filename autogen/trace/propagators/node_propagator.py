@@ -33,8 +33,8 @@ class NodeFeedback(AbstractFeedback):
 class NodePropagator(Propagator):
     """A propagator that collects all the nodes seen in the path."""
 
-    def init_feedback(self, feedback: Any):
-        return NodeFeedback(graph=[], user_feedback=feedback)
+    def init_feedback(self, node, feedback: Any):
+        return NodeFeedback(graph=[(node.level, node)], user_feedback=feedback)
 
     def _propagate(self, child: MessageNode):
         graph = [(p.level, p) for p in child.parents] + [(child.level, child)]
