@@ -35,6 +35,7 @@ import atexit
 from collections import defaultdict
 
 import argparse
+from autogen.trace.nodes import ExceptionNode
 
 
 def env_fn(env_id, env_task_set, executable_args, args):
@@ -172,7 +173,7 @@ class TraceVirtualHome:
 
             agent_obs_descs[it] = self.agents[it].get_obs_forLLM_plan()
             agent_infos[it] = info
-            agent_goal_descs[it] = agent.LLM.goal_desc
+            agent_goal_descs[it] = self.agents[it].LLM.goal_desc
 
         # use these two, we can generate plans...
         return agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos
@@ -364,34 +365,6 @@ class TraceVirtualHome:
         return step_info, agent_obs_descs, dict_actions, self.dict_info
 
 
-"""
-1. An arena to coordinate all agents, reset all of them, take centralized step
-2. An agent that can send prompts
-"""
-
-"""
-Write a high-level wrapper of an environment
-that supports high-level actions
-([goexplore], ...)
-
-**Build the high-level gym Env**
-"""
-
-"""
-@trace.bundle()
-def act():
-    #plan()
-    #discuss()
-"""
-
-"""
-Steps:
-Let's first have an agent that just acts...without communication
-
-Q: when does "send_message" occur as an option for the agent?
-"""
-
-
 class RandomAgent:
     def __init__(self):
         pass
@@ -415,6 +388,7 @@ import autogen
 from autogen.trace.bundle import bundle, trace_class, TraceExecutionError, node
 from textwrap import dedent
 from autogen.trace.nodes import node, GRAPH, ParameterNode
+import autogen.trace as trace
 
 class LLMCallable:
     def __init__(self, config_list=None, max_tokens=1024, verbose=False):
@@ -424,7 +398,6 @@ class LLMCallable:
         self.max_tokens = max_tokens
         self.verbose = verbose
 
-    # @bundle(catch_execution_error=False)
     def call_llm(self, user_prompt):
         """
         Sends the constructed prompt (along with specified request) to an LLM.
@@ -455,38 +428,184 @@ class TraceAgent(LLMCallable):
         self.organization_instructions = ParameterNode(self.organization_instructions, trainable=True,
                                                        description="[ParameterNode] This dictates how the agent should interact with another agent on a high level.")
 
+    def __call__(self, obs):
+        obs = obs.replace("$ORGANIZATION_INSTRUCTIONS$", self.organization_instructions)
+        obs = self.meta_analyze(obs)
+        action = self.act(obs)
+        return action
+
+    @bundle(trainable=True)
+    def meta_analyze(self, obs):
+        """
+        The obs is a prompt-style paragraph that describes the current state of the environment.
+        It is sent to an LLM.
+        Here, we can modify the obs to give the LLM more context or guidance based on specific needs.
+        """
+        return obs
+
     @bundle(catch_execution_error=False)
-    def act(self, obs, organization_instructions):
+    def act(self, obs):
         """
         call the LLM to produce the next action for the agent
         """
-        obs = obs.replace("$ORGANIZATION_INSTRUCTIONS$", organization_instructions)
         response = self.call_llm(obs)
         plan = json.loads(response)
         return plan['action']
 
+    def extract_available_actions(self, text):
+        # Define the regex pattern to extract available actions without the letter
+        pattern = r'[A-Z]\. (.+)'
 
-def rollout(env, agent, config, horizon=50):
+        # Find all matches
+        matches = re.findall(pattern, text)
+
+        return matches
+
+class TracedEnv:
+    def __init__(self, video=True):
+        # find a way to turn off video recording to make it go faster
+
+        # this is a deterministic environment
+        args = Config()
+        args.comm = False
+
+        args.prompt_template_path = "/piech/u/anie/Organized-LLM-Agents/envs/cwah/LLM/prompt_multi_comm.csv"
+
+        args.action_history_len = 20
+        args.dialogue_history_len = 30
+
+        args.max_number_steps = 250
+        args.run_id = 0
+        args.agent_fn = [0] * 2
+        args.num_agents = 2
+
+        self.obs = None
+        self.args = args
+        self.env = TraceVirtualHome(args.max_number_steps, args.run_id,
+                                    env_fn, args.agent_fn, args.num_agents, args=args)
+
+        atexit.register(self.close)
+
+    def close(self):
+        self.env.close()
+        del self.env
+
+    def reset_env(self):
+        self.env.close()
+        self.env = TraceVirtualHome(self.args.max_number_steps, self.args.run_id,
+                                    env_fn, self.args.agent_fn, self.args.num_agents, args=self.args)
+    def reset(self):
+        # doing the same wrapped approach as metaworld
+
+        # TODO: increment run_id, make sure recording works for different driectory
+        # or turn off video recording...
+        try:
+            agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = self.env.reset()
+        except:
+            self.reset_env()
+            agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = self.env.reset()
+
+        @bundle()
+        def reset(self):
+            return agent_obs_descs
+
+        agent_obs_descs = reset(self)
+
+        self.obs = agent_obs_descs
+
+        return agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos
+
+    def step(self, plans, agent_infos, LM_times, agent_obs, agent_goal_specs, agent_obs_descs):
+        # we are shielding a lot of the environment away...
+        # we might get a different chain for each agent...that might be easier?
+        try:
+            controls = {}
+            for i in range(len(plans)):
+                controls[i] = plans[i].data  # hard coded conversion
+            agent_obs_descs = [agent_obs_descs[i].data for i in range(len(agent_obs_descs))]
+
+            step_info, next_agent_obs_descs, dict_actions, dict_info = self.env.step(controls, agent_infos, LM_times, agent_obs,
+                                                                       agent_goal_specs, agent_obs_descs)
+            self.obs = next_agent_obs_descs
+        except (
+            Exception
+        ) as e:  # Since we are not using bundle, we need to handle exceptions maually as bundle does internally.
+            e_node = ExceptionNode(
+                e,
+                inputs={"actions": node(controls)},
+                description="[exception] The operator step raises an exception.",
+                name="exception_step",
+            )
+            raise TraceExecutionError(e_node)
+
+        # have to add allow_external_dependencies, why metaworld is fine?
+        @bundle(allow_external_dependencies=True)
+        def step(action):
+            """
+            Take action in the environment and return the next observation
+            """
+            return next_agent_obs_descs
+
+        next_obs = step(plans)
+        return step_info, next_obs, dict_actions, dict_info
+
+
+def rollout(env, agents, horizon=10):
     LM_times = {
         0: 0,
         1: 0
     }
 
+    traj = {}
+    for i in range(len(agents)):
+        traj[i] = dict(observation=[], plans=[],
+                action=[], reward=[], termination=[], truncation=[], success=[], input=[], info=[])
+
     agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = env.reset()
-    rewards = []
+    for i in range(len(agents)):
+        traj[i]['observation'].append(agent_obs_descs[i])
 
     for _ in range(horizon):
-        plans = agent.act(agent_obs_descs)
-        step_info, agent_obs_descs, dict_actions, dict_info = env.step(plans, agent_infos, LM_times, agent_obs,
+        plans = {}
+        errors = {}
+        for i in range(len(agents)):
+            agent = agents[i]
+            try: # traced
+                plans[i] = agent(agent_obs_descs[i]['prompts'])
+            except trace.TraceExecutionError as e:
+                # we backprop through the agent that makes an error
+                errors[i] = e
+                plans[i] = None
+                break
+
+        if len(errors) == 0:
+            step_info, next_agent_obs_descs, dict_actions, dict_info = env.step(plans, agent_infos, LM_times, agent_obs,
                                                                        agent_goal_specs, agent_obs_descs)
-        agent_obs, reward, done, infos, messages = step_info
-        rewards.append(reward)
+            agent_obs, reward, done, infos, messages = step_info
+            for i in range(len(agents)):
+                traj[i]['observation'].append(next_agent_obs_descs[i])
+                traj[i]['action'].append(dict_actions[i])
+                traj[i]['reward'].append(reward)
+                traj[i]['termination'].append(done[i])
+                traj[i]['plans'].append(plans[i])
+                traj[i]['info'].append(dict_info[i])
+
+            agent_obs_descs = next_agent_obs_descs
+        else:
+            break
 
         if done:
             break
 
-    return rewards
+    return traj, errors
 
+"""
+A few ideas on this dataset
+Since the observation is stored as a python object
+(and yes, it is cheating)
+What if we just learn a python function that can parse through this info
+and just directly guide the agent to the right place!?
+"""
 
 @dataclass
 class Config:
@@ -504,26 +623,27 @@ class Config:
     executable_file = "/piech/u/anie/Organized-LLM-Agents/envs/executable/linux_exec.v2.2.4.x86_64"
 
     organization_instructions = None
+    prompt_template_path = "/piech/u/anie/Organized-LLM-Agents/envs/cwah/LLM/prompt_multi_comm.csv"
 
     log_thoughts = True
     debug = False
 
+    comm = False
+    action_history_len = 20
+    dialogue_history_len = 30
+
 
 if __name__ == '__main__':
-    args = Config()
-    args.comm = False
+    pass
 
-    args.prompt_template_path = "/piech/u/anie/Organized-LLM-Agents/envs/cwah/LLM/prompt_multi_comm.csv"
-
-    args.action_history_len = 20
-    args.dialogue_history_len = 30
-
-    max_number_steps = 250
-    run_id = 0
-    agent_fn = [0] * 2
-    num_agents = 2
-
-    agent = RandomAgent()
-    env = TraceVirtualHome(max_number_steps, run_id, env_fn, agent_fn, num_agents, args=args)
-
-    rollout(env, agent, args, horizon=20)
+    # args = Config()
+    #
+    # max_number_steps = 250
+    # run_id = 0
+    # agent_fn = [0] * 2
+    # num_agents = 2
+    #
+    # agent = RandomAgent()
+    # env = TraceVirtualHome(max_number_steps, run_id, env_fn, agent_fn, num_agents, args=args)
+    #
+    # rollout(env, agent, args, horizon=20)
