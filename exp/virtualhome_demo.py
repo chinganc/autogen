@@ -57,16 +57,6 @@ def env_fn(env_id, env_task_set, executable_args, args):
                             )
 
 
-"""
-Goal:
-High-level wrappers to take steps in the environment
-Return text observations for each agent, and reward and stuff
-
-Check:
-1. Write the communication function
-"""
-
-
 class TraceVirtualHome:
     def __init__(self, max_number_steps, run_id, env_fn, agent_fn, num_agents, record_dir='out', debug=False,
                  run_predefined_actions=False, comm=False, args=None):
@@ -469,13 +459,14 @@ class TraceAgent(LLMCallable):
         available_actions = self.extract_actions(obs) # a dictionary
         plan = json.loads(response)
         action = plan['action']
+
         if '[send_message]' not in action:
             action = self.unify_and_match_action(action, available_actions)
 
         return action
 
     def extract_actions(self, text):
-        pattern = re.compile(r'([A-Z])\. (\[.*?\] <.*?> \(\d+\))')
+        pattern = re.compile(r'([A-Z])\. (\[.*?\](?: <.*?> \(\d+\))?(?:: .*?)?)')
         matches = pattern.findall(text)
         actions = {letter: action for letter, action in matches}
         return actions
@@ -583,10 +574,10 @@ class TracedEnv:
         # TODO: increment run_id, make sure recording works for different driectory
         # or turn off video recording...
         try:
-            agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = self.env.reset()
+            agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = self.env.reset(task_id=8)
         except:
             self.reset_env()
-            agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = self.env.reset()
+            agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = self.env.reset(task_id=8)
 
         @bundle()
         def reset(self):
