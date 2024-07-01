@@ -297,6 +297,9 @@ class TraceVirtualHome:
 
             # one round of message sending, we check if any agent chooses to send message
             for it, agent in enumerate(self.agents):
+                if dict_actions[it] is None:
+                    continue
+
                 if dict_actions[it].startswith('[send_message]'):
                     # send message to the other agents
                     teammate_name, teammate_agent_id, message = self.parse_send_message(dict_actions[it])
@@ -322,16 +325,17 @@ class TraceVirtualHome:
             obs = self.env.get_observations()
             step_info = [obs, step_info[1], step_info[2], step_info[3], step_info[4]]
             agent_obs, reward, done, infos, messages = step_info
-            if done:
-                break
 
+            agent_obs_descs = {}
             # we explicitly process it before generating the description
             for it in range(len(self.agents)):
                 self.agents[it].obs_processing(agent_obs[it], agent_goal_specs[it])
 
-            agent_obs_descs = {}
             for it in range(len(self.agents)):
                 agent_obs_descs[it] = self.agents[it].get_obs_forLLM_plan()
+
+            if done:
+                break
 
             # compare progress text with the original one (where we started)
             # compare the available actions
@@ -421,6 +425,8 @@ class LLMCallable:
             print("LLM response:\n", response)
         return response
 
+from difflib import SequenceMatcher
+
 class TraceAgent(LLMCallable):
     def __init__(self, verbose=False):
         super().__init__(verbose=verbose)
@@ -432,6 +438,16 @@ class TraceAgent(LLMCallable):
         obs = obs.replace("$ORGANIZATION_INSTRUCTIONS$", self.organization_instructions)
         obs = self.meta_analyze(obs)
         action = self.act(obs)
+        return action
+
+    def process_action(self, action, available_actions):
+        # sometimes the action would just output an option, like "O" or "A"
+        # sometimes the action will be "O. [action] xxx"
+        # somtimes the action is just "[action] xxx" (which is what we want)
+        # we normalize the action representation here
+
+        # Define the regex pattern to extract the action without the letter
+
         return action
 
     @bundle(trainable=True)
@@ -448,18 +464,85 @@ class TraceAgent(LLMCallable):
         """
         call the LLM to produce the next action for the agent
         """
+        # print(obs)
         response = self.call_llm(obs)
+        available_actions = self.extract_actions(obs) # a dictionary
         plan = json.loads(response)
-        return plan['action']
+        action = plan['action']
+        if '[send_message]' not in action:
+            action = self.unify_and_match_action(action, available_actions)
 
-    def extract_available_actions(self, text):
-        # Define the regex pattern to extract available actions without the letter
-        pattern = r'[A-Z]\. (.+)'
+        return action
 
-        # Find all matches
-        matches = re.findall(pattern, text)
+    def extract_actions(self, text):
+        pattern = re.compile(r'([A-Z])\. (\[.*?\] <.*?> \(\d+\))')
+        matches = pattern.findall(text)
+        actions = {letter: action for letter, action in matches}
+        return actions
 
-        return matches
+    def unify_action_representation(self, action_str, available_actions):
+        # Remove trailing periods and leading action letters if present
+        action_str = action_str.strip('.')
+
+        # Check if action_str is just a letter
+        if len(action_str) == 1 and action_str in available_actions:
+            return available_actions[action_str]
+
+        # Extract the actual action part from complex strings
+        match = re.search(r'\[(.*?)\] <(.*?)> \((.*?)\)', action_str)
+        if match:
+            action = f"[{match.group(1)}] <{match.group(2)}> ({match.group(3)})"
+            return action
+
+        return action_str  # Return the cleaned up action string if no complex format is detected
+
+    def unify_and_match_action(self, action_str, available_actions):
+        # Remove trailing periods and leading action letters if present
+        action_str = action_str.strip('.')
+
+        # Check if action_str is just a letter
+        if len(action_str) == 1 and action_str in available_actions:
+            return available_actions[action_str]
+
+        # Extract the actual action part from complex strings
+        match = re.search(r'\[(.*?)\] <(.*?)> \((.*?)\)', action_str)
+        if match:
+            action_type, action_object, action_id = match.groups()
+            action = f"[{action_type}] <{action_object}> ({action_id})"
+
+            # Check for an exact match in available actions
+            if action in available_actions.values():
+                return action
+
+            # Fuzzy match if exact match is not found
+            return self.fuzzy_match_action(action, available_actions)
+
+        return action_str  # Return the cleaned up action string if no complex format is detected
+
+    def fuzzy_match_action(self, returned_action, available_actions):
+        # Extract the action and object id from the returned action
+        returned_match = re.search(r'\[(.*?)\] <(.*?)> \((.*?)\)', returned_action)
+        if not returned_match:
+            return None
+
+        returned_action_type, returned_object, returned_id = returned_match.groups()
+
+        # Initialize best match variables
+        best_match = None
+        highest_ratio = 0
+
+        # Iterate over available actions to find the closest match
+        for action in available_actions.values():
+            match = re.search(r'\[(.*?)\] <(.*?)> \((.*?)\)', action)
+            if match:
+                action_type, action_object, action_id = match.groups()
+                if action_id == returned_id and action_object == returned_object:
+                    ratio = SequenceMatcher(None, returned_action_type, action_type).ratio()
+                    if ratio > highest_ratio:
+                        highest_ratio = ratio
+                        best_match = action
+
+        return best_match
 
 class TracedEnv:
     def __init__(self, video=True):
@@ -518,25 +601,27 @@ class TracedEnv:
     def step(self, plans, agent_infos, LM_times, agent_obs, agent_goal_specs, agent_obs_descs):
         # we are shielding a lot of the environment away...
         # we might get a different chain for each agent...that might be easier?
-        try:
-            controls = {}
-            for i in range(len(plans)):
-                controls[i] = plans[i].data  # hard coded conversion
-            agent_obs_descs = [agent_obs_descs[i].data for i in range(len(agent_obs_descs))]
+        # try:
+        controls = {}
+        for i in range(len(plans)):
+            controls[i] = plans[i].data  # hard coded conversion
+        agent_obs_descs = [agent_obs_descs[i].data for i in range(len(agent_obs_descs))]
 
-            step_info, next_agent_obs_descs, dict_actions, dict_info = self.env.step(controls, agent_infos, LM_times, agent_obs,
-                                                                       agent_goal_specs, agent_obs_descs)
-            self.obs = next_agent_obs_descs
-        except (
-            Exception
-        ) as e:  # Since we are not using bundle, we need to handle exceptions maually as bundle does internally.
-            e_node = ExceptionNode(
-                e,
-                inputs={"actions": node(controls)},
-                description="[exception] The operator step raises an exception.",
-                name="exception_step",
-            )
-            raise TraceExecutionError(e_node)
+        print(controls)
+
+        step_info, next_agent_obs_descs, dict_actions, dict_info = self.env.step(controls, agent_infos, LM_times, agent_obs,
+                                                                   agent_goal_specs, agent_obs_descs)
+        self.obs = next_agent_obs_descs
+        # except (
+        #     Exception
+        # ) as e:
+        #     e_node = ExceptionNode(
+        #         e,
+        #         inputs={"actions": node(controls)},
+        #         description="[exception] The operator step raises an exception.",
+        #         name="exception_step",
+        #     )
+        #     raise TraceExecutionError(e_node)
 
         # have to add allow_external_dependencies, why metaworld is fine?
         @bundle(allow_external_dependencies=True)
@@ -586,7 +671,7 @@ def rollout(env, agents, horizon=10):
                 traj[i]['observation'].append(next_agent_obs_descs[i])
                 traj[i]['action'].append(dict_actions[i])
                 traj[i]['reward'].append(reward)
-                traj[i]['termination'].append(done[i])
+                traj[i]['termination'].append(done)
                 traj[i]['plans'].append(plans[i])
                 traj[i]['info'].append(dict_info[i])
 
@@ -595,6 +680,7 @@ def rollout(env, agents, horizon=10):
             break
 
         if done:
+            print("Succeeded all tasks, environment terminated")
             break
 
     return traj, errors
@@ -614,7 +700,7 @@ class Config:
     use_editor = False
     base_port = None
     seed = 1
-    gen_video = True
+    gen_video = False
     record_dir = ""
     mode = 'test'
 

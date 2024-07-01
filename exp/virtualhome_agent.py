@@ -194,9 +194,14 @@ class LLM_agent:
     #                          self.teammate_agent_id], None, self.steps)
 
     def get_obs_forLLM_plan(self):
-        # this can be called...
-        if len(self.grabbed_objects) == 2:
-            return f"[goput] {self.goal_location}", {}
+
+        # this is hard-coded by the github (not by us)
+        # basically saying once we have two items, we hard code goput
+        # but maybe this is unnecessary
+        # also this should happen on the agent level...
+
+        # if len(self.grabbed_objects) == 2:
+        #     return f"[goput] {self.goal_location}", {}
 
         return self.LLM.get_runnable(self.current_room, [self.id2node[x] for x in self.grabbed_objects], self.satisfied,
                                      self.unchecked_containers,
@@ -348,9 +353,10 @@ class LLM_agent:
         info = self.obs_processing(observation, goal)
         action = None
 
-        if plan is None:
+        if plan is None or plan == 'None':
             print("No more things to do!")
             plan = f"[wait]"
+            action = None
 
         self.plan = plan
         a_info.update({"steps": self.steps})
@@ -374,8 +380,10 @@ class LLM_agent:
             self.plan = None
         elif self.plan.startswith('[wait]'):
             action = None
+        elif self.plan.startswith('[walktowards]'):
+            action = self.plan
         else:
-            raise ValueError(f"unavailable plan {self.plan}")
+            raise ValueError(f"unavailable plan {self.plan}, action: {action}")
 
         if self.plan is None and action is None:
             # this is actually a hidden "retry" condition from the original code
@@ -386,8 +394,11 @@ class LLM_agent:
             action = None
             # import pdb; pdb.set_trace()
 
-        if action.startswith('[send_message]'):
-            self.action_history.append(action.split(":")[0])
+        if action is not None:
+            if action.startswith('[send_message]'):
+                self.action_history.append(action.split(":")[0])
+            else:
+                self.action_history.append(action if action is not None else self.plan)
         else:
             self.action_history.append(action if action is not None else self.plan)
 
@@ -814,6 +825,9 @@ class LLM:
                     available_plans.append(f"[gograb] <{obj['class_name']}> ({obj['id']})")
         if len(grabbed_objects) > 0:
             available_plans.append(f"[goput] {self.goal_location}")
+
+        # added [wait] to always be an option
+        available_plans.append('[wait]')
 
         # check if the other agent is in the same room, if so, add the plan to send message
         if not self.single:
