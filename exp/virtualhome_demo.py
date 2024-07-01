@@ -344,7 +344,7 @@ class TraceVirtualHome:
                 pattern = r'Progress:.*|Available actions:.*(?:\n.*\w.*)+'
                 new_matches = re.findall(pattern, new_text)
 
-                print("obs progress: ", new_matches[0])
+                # print("obs progress: ", new_matches[0])
 
                 if matches != new_matches:
                     break_loop = True
@@ -598,7 +598,7 @@ class TracedEnv:
             controls[i] = plans[i].data  # hard coded conversion
         agent_obs_descs = [agent_obs_descs[i].data for i in range(len(agent_obs_descs))]
 
-        print(controls)
+        # print(controls)
 
         step_info, next_agent_obs_descs, dict_actions, dict_info = self.env.step(controls, agent_infos, LM_times, agent_obs,
                                                                    agent_goal_specs, agent_obs_descs)
@@ -713,14 +713,8 @@ class Config:
 if __name__ == '__main__':
     pass
 
-    # args = Config()
-    #
-    # max_number_steps = 250
-    # run_id = 0
-    # agent_fn = [0] * 2
-    # num_agents = 2
-    #
-    # agent = RandomAgent()
-    # env = TraceVirtualHome(max_number_steps, run_id, env_fn, agent_fn, num_agents, args=args)
-    #
-    # rollout(env, agent, args, horizon=20)
+    env = TracedEnv()
+    agent1 = TraceAgent()
+    agent2 = TraceAgent()
+
+    trajs, errors = rollout(env, [agent1, agent2], horizon=50)
