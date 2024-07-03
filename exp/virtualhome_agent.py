@@ -839,8 +839,6 @@ class LLM:
         for i, plan in enumerate(available_plans):
             plans += f"{chr(ord('A') + i)}. {plan}\n"
 
-        # TODO: add [send_message] action
-        # [send_message] is processed by unity step and returned inside messages variable
 
         return plans, len(available_plans), available_plans
 

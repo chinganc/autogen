@@ -416,17 +416,19 @@ class LLMCallable:
         return response
 
 from difflib import SequenceMatcher
+from autogen.trace.bundle import trace_class
 
+@trace_class
 class TraceAgent(LLMCallable):
     def __init__(self, verbose=False):
         super().__init__(verbose=verbose)
-        self.organization_instructions = dedent("""Cooperate in a decentralized way.""")
-        self.organization_instructions = ParameterNode(self.organization_instructions, trainable=True,
-                                                       description="[ParameterNode] This dictates how the agent should interact with another agent on a high level.")
+        self.plan = dedent("")
+        self.plan = ParameterNode(self.plan, trainable=True,
+                                                       description="[ParameterNode] This represents the current plan of the agent.")
 
     def __call__(self, obs):
-        obs = obs.replace("$ORGANIZATION_INSTRUCTIONS$", self.organization_instructions)
-        obs = self.meta_analyze(obs)
+        obs = obs.replace("$PLAN$", self.plan)
+        # obs = self.meta_analyze(obs)
         action = self.act(obs)
         return action
 
@@ -440,14 +442,14 @@ class TraceAgent(LLMCallable):
 
         return action
 
-    @bundle(trainable=True)
-    def meta_analyze(self, obs):
-        """
-        The obs is a prompt-style paragraph that describes the current state of the environment.
-        It is sent to an LLM.
-        Here, we can modify the obs to give the LLM more context or guidance based on specific needs.
-        """
-        return obs
+    # @bundle(trainable=True)
+    # def meta_analyze(self, obs):
+    #     """
+    #     The obs is a prompt-style paragraph that describes the current state of the environment.
+    #     It is sent to an LLM.
+    #     Here, we can modify the obs to give the LLM more context or guidance based on specific needs.
+    #     """
+    #     return obs
 
     @bundle(catch_execution_error=False)
     def act(self, obs):
@@ -456,12 +458,20 @@ class TraceAgent(LLMCallable):
         """
         # print(obs)
         response = self.call_llm(obs)
-        available_actions = self.extract_actions(obs) # a dictionary
+        available_actions = self.extract_actions(obs)  # a dictionary
         plan = json.loads(response)
-        action = plan['action']
+        if 'action' in plan:
+            action = plan['action']
+        else:
+            action = ""
 
         if '[send_message]' not in action:
             action = self.unify_and_match_action(action, available_actions)
+
+            # to ensure at least we got some results
+            # if the matched failed, we randomly grab one
+            if action not in available_actions.values():
+                action = random.choice(list(available_actions.values()))
 
         return action
 
@@ -580,14 +590,17 @@ class TracedEnv:
             agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = self.env.reset(task_id=8)
 
         @bundle()
-        def reset(self):
-            return agent_obs_descs
+        def reset(agent_idx):
+            return agent_obs_descs[agent_idx]['prompts']
 
-        agent_obs_descs = reset(self)
+        agent_obs_descs_node = {}
+        for i in range(len(agent_obs_descs)):
+            agent_obs_descs_node[i] = agent_obs_descs[i]
+            agent_obs_descs_node[i]['prompts'] = reset(i)
 
-        self.obs = agent_obs_descs
+        self.obs = agent_obs_descs_node
 
-        return agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos
+        return agent_obs, agent_obs_descs_node, agent_goal_specs, agent_goal_descs, agent_infos
 
     def step(self, plans, agent_infos, LM_times, agent_obs, agent_goal_specs, agent_obs_descs):
         # we are shielding a lot of the environment away...
@@ -596,13 +609,14 @@ class TracedEnv:
         controls = {}
         for i in range(len(plans)):
             controls[i] = plans[i].data  # hard coded conversion
-        agent_obs_descs = [agent_obs_descs[i].data for i in range(len(agent_obs_descs))]
+        # agent_obs_descs = [agent_obs_descs[i].data for i in range(len(agent_obs_descs))]
+            agent_obs_descs[i]['prompts'] = agent_obs_descs[i]['prompts'].data
 
         # print(controls)
 
+        # try:
         step_info, next_agent_obs_descs, dict_actions, dict_info = self.env.step(controls, agent_infos, LM_times, agent_obs,
-                                                                   agent_goal_specs, agent_obs_descs)
-        self.obs = next_agent_obs_descs
+                                                               agent_goal_specs, agent_obs_descs)
         # except (
         #     Exception
         # ) as e:
@@ -614,15 +628,21 @@ class TracedEnv:
         #     )
         #     raise TraceExecutionError(e_node)
 
+        self.obs = next_agent_obs_descs
+
         # have to add allow_external_dependencies, why metaworld is fine?
         @bundle(allow_external_dependencies=True)
-        def step(action):
+        def step(action, agent_idx):
             """
             Take action in the environment and return the next observation
             """
-            return next_agent_obs_descs
+            return next_agent_obs_descs[agent_idx]['prompts']
 
-        next_obs = step(plans)
+        next_obs = {}
+        for i in range(len(next_agent_obs_descs)):
+            next_obs[i] = next_agent_obs_descs[i]
+            next_obs[i]['prompts'] = step(plans[i], i)
+
         return step_info, next_obs, dict_actions, dict_info
 
 
@@ -659,7 +679,7 @@ def rollout(env, agents, horizon=10):
                                                                        agent_goal_specs, agent_obs_descs)
             agent_obs, reward, done, infos, messages = step_info
             for i in range(len(agents)):
-                traj[i]['observation'].append(next_agent_obs_descs[i])
+                traj[i]['observation'].append(next_agent_obs_descs[i])  # "prompts" node can be back-propped
                 traj[i]['action'].append(dict_actions[i])
                 traj[i]['reward'].append(reward)
                 traj[i]['termination'].append(done)
@@ -675,6 +695,132 @@ def rollout(env, agents, horizon=10):
             break
 
     return traj, errors
+
+from autogen.trace.optimizers import FunctionOptimizerV2
+import copy
+
+# we need to do per-step update
+# we can do two versions
+# 1. without online update (original agent performance)
+# 2. with online update (optimizer decides how agent acts in real time)
+
+def dynamic_rollout(env, agents, optimizers, horizon=10):
+    # optimizers has memory, so we pass in from the outside
+
+    LM_times = {
+        0: 0,
+        1: 0
+    }
+
+    traj = {}
+    log = {}
+    for i in range(len(agents)):
+        traj[i] = dict(observation=[], plans=[], parameters=[], goal_specs=[],
+                       action=[], reward=[], termination=[], truncation=[],
+                       success=[], input=[], info=[])
+        log[i] = dict(optimizer_log=[])
+
+    agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = env.reset()
+    for i in range(len(agents)):
+        traj[i]['observation'].append(agent_obs_descs[i])
+
+    for h in range(horizon):
+        plans = {}
+        errors = {}
+        for i in range(len(agents)):
+            agent = agents[i]
+            try:  # traced
+                plans[i] = agent(agent_obs_descs[i]['prompts'])
+            except trace.TraceExecutionError as e:
+                # we backprop through the agent that makes an error
+                errors[i] = e
+                plans[i] = None
+                break
+
+        if len(errors) == 0:
+            step_info, next_agent_obs_descs, dict_actions, dict_info = env.step(plans, agent_infos, LM_times, agent_obs,
+                                                                                agent_goal_specs, agent_obs_descs)
+            agent_obs, reward, done, infos, messages = step_info
+            for i in range(len(agents)):
+                traj[i]['observation'].append(next_agent_obs_descs[i])  # "prompts" node can be back-propped
+                traj[i]['action'].append(dict_actions[i])
+                traj[i]['reward'].append(reward)
+                traj[i]['termination'].append(done)
+                traj[i]['plans'].append(plans[i])
+                traj[i]['parameters'].append(agents[i].plan.data)
+                traj[i]['goal_specs'].append(copy.copy(agent_goal_specs[i]))
+                traj[i]['info'].append(dict_info[i])
+
+            agent_obs_descs = next_agent_obs_descs
+        else:
+            # maybe not break here
+            break
+
+        # optimize
+        if len(optimizers) != 0:
+            for i in range(len(agents)):
+                optimizer = optimizers[i]
+                target = traj[i]['observation'][-1]['prompts']
+                optimizer.zero_feedback()
+                feedback = f"Task Return: {sum(traj[i]['reward'])}"
+
+                print(f"Step: {h}")
+                print(f"Feedback: {feedback}")
+                print(f"Parameter:\n {agents[i].plan.data}")
+
+                optimizer.backward(target, feedback)
+                optimizer.step(verbose=False)
+
+                log[i]['optimizer_log'].append(optimizer.log)
+        else:
+            print(f"Step: {h}")
+            feedback = f"Task Return: {sum(traj[0]['reward'])}"
+            print(f"Feedback: {feedback}")
+
+        # detach
+        for i in range(len(agents)):
+            traj[i]['observation'][-1]['prompts'] = node(traj[i]['observation'][-1]['prompts'].data)
+
+        if done:
+            print("Succeeded all tasks, environment terminated")
+            break
+
+    return traj, log
+
+def optimize_policy(n_optimization_steps=1):
+    agent1 = TraceAgent()
+    agent2 = TraceAgent()
+    agents = [agent1, agent2]
+
+    optimizer = FunctionOptimizerV2(agent1.parameters() + agent2.parameters())
+
+    env = TracedEnv()
+
+    print("Optimization Starts")
+    log = dict(returns=[], successes=[], episode_lens=[], optimizer_log=[])
+    for i in range(n_optimization_steps):
+        # Rollout and collect feedback
+        traj, error = rollout(env, agents, horizon=30)
+        # Compute feedback and logging
+        if len(error) == 0:
+            # Provide feedback to the last observation
+            feedback = f"Success: {traj['success'][-1]}\n"
+            feedback += f"Return: {sum(traj['reward'])}"
+        else:
+            feedback = str(error)
+
+        target1 = traj[0]['observation'][-1]['prompts']
+        target2 = traj[1]['observation'][-1]['prompts']
+
+        # Optimization step
+        optimizer.zero_feedback()
+        optimizer.backward(target1, feedback)
+        optimizer.backward(target2, feedback)
+        optimizer.step(verbose=True)
+
+    return [agent1, agent2]
+
+
 
 """
 A few ideas on this dataset
