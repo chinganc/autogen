@@ -546,11 +546,10 @@ class TraceAgent(LLMCallable):
         return best_match
 
 class TracedEnv:
-    def __init__(self, video=True):
+    def __init__(self, args):
         # find a way to turn off video recording to make it go faster
 
         # this is a deterministic environment
-        args = Config()
         args.comm = False
 
         args.prompt_template_path = "/piech/u/anie/Organized-LLM-Agents/envs/cwah/LLM/prompt_multi_comm.csv"
@@ -578,16 +577,16 @@ class TracedEnv:
         self.env.close()
         self.env = TraceVirtualHome(self.args.max_number_steps, self.args.run_id,
                                     env_fn, self.args.agent_fn, self.args.num_agents, args=self.args)
-    def reset(self):
+    def reset(self, task_id=8):
         # doing the same wrapped approach as metaworld
 
         # TODO: increment run_id, make sure recording works for different driectory
         # or turn off video recording...
         try:
-            agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = self.env.reset(task_id=8)
+            agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = self.env.reset(task_id=task_id)
         except:
             self.reset_env()
-            agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = self.env.reset(task_id=8)
+            agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = self.env.reset(task_id=task_id)
 
         @bundle()
         def reset(agent_idx):
@@ -614,19 +613,19 @@ class TracedEnv:
 
         # print(controls)
 
-        # try:
-        step_info, next_agent_obs_descs, dict_actions, dict_info = self.env.step(controls, agent_infos, LM_times, agent_obs,
+        try:
+            step_info, next_agent_obs_descs, dict_actions, dict_info = self.env.step(controls, agent_infos, LM_times, agent_obs,
                                                                agent_goal_specs, agent_obs_descs)
-        # except (
-        #     Exception
-        # ) as e:
-        #     e_node = ExceptionNode(
-        #         e,
-        #         inputs={"actions": node(controls)},
-        #         description="[exception] The operator step raises an exception.",
-        #         name="exception_step",
-        #     )
-        #     raise TraceExecutionError(e_node)
+        except (
+            Exception
+        ) as e:
+            e_node = ExceptionNode(
+                e,
+                inputs={"actions": node(controls)},
+                description="[exception] The operator step raises an exception.",
+                name="exception_step",
+            )
+            raise TraceExecutionError(e_node)
 
         self.obs = next_agent_obs_descs
 
@@ -704,7 +703,7 @@ import copy
 # 1. without online update (original agent performance)
 # 2. with online update (optimizer decides how agent acts in real time)
 
-def dynamic_rollout(env, agents, optimizers, horizon=10):
+def dynamic_rollout(env, agents, optimizers, horizon=10, task_id=8):
     # optimizers has memory, so we pass in from the outside
 
     LM_times = {
@@ -718,9 +717,12 @@ def dynamic_rollout(env, agents, optimizers, horizon=10):
         traj[i] = dict(observation=[], plans=[], parameters=[], goal_specs=[],
                        action=[], reward=[], termination=[], truncation=[],
                        success=[], input=[], info=[])
-        log[i] = dict(optimizer_log=[])
+        log[i] = dict(optimizer_log=[],
+                      observation=[], plans=[], parameters=[], goal_specs=[],
+                      action=[], reward=[], termination=[], truncation=[],
+                      success=[], input=[])
 
-    agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = env.reset()
+    agent_obs, agent_obs_descs, agent_goal_specs, agent_goal_descs, agent_infos = env.reset(task_id=task_id)
     for i in range(len(agents)):
         traj[i]['observation'].append(agent_obs_descs[i])
 
@@ -742,6 +744,7 @@ def dynamic_rollout(env, agents, optimizers, horizon=10):
                                                                                 agent_goal_specs, agent_obs_descs)
             agent_obs, reward, done, infos, messages = step_info
             for i in range(len(agents)):
+
                 traj[i]['observation'].append(next_agent_obs_descs[i])  # "prompts" node can be back-propped
                 traj[i]['action'].append(dict_actions[i])
                 traj[i]['reward'].append(reward)
@@ -750,6 +753,21 @@ def dynamic_rollout(env, agents, optimizers, horizon=10):
                 traj[i]['parameters'].append(agents[i].plan.data)
                 traj[i]['goal_specs'].append(copy.copy(agent_goal_specs[i]))
                 traj[i]['info'].append(dict_info[i])
+
+                unpacked_next_agent_obs_descs = {}
+                for key in next_agent_obs_descs[i]:
+                    if key != 'prompts':
+                        unpacked_next_agent_obs_descs[key] = next_agent_obs_descs[i][key]
+                    else:
+                        unpacked_next_agent_obs_descs[key] = next_agent_obs_descs[i][key].data
+
+                log[i]['observation'].append(unpacked_next_agent_obs_descs)
+                log[i]['action'].append(dict_actions[i])
+                log[i]['reward'].append(reward)
+                log[i]['termination'].append(done)
+                log[i]['plans'].append(plans[i].data)
+                log[i]['parameters'].append(agents[i].plan.data)
+                log[i]['goal_specs'].append(copy.copy(agent_goal_specs[i]))
 
             agent_obs_descs = next_agent_obs_descs
         else:
@@ -785,6 +803,7 @@ def dynamic_rollout(env, agents, optimizers, horizon=10):
             print("Succeeded all tasks, environment terminated")
             break
 
+    # logs can be saved via pickle
     return traj, log
 
 def optimize_policy(n_optimization_steps=1):
@@ -837,8 +856,8 @@ class Config:
     use_editor = False
     base_port = None
     seed = 1
-    gen_video = False
-    record_dir = ""
+    gen_video = True
+    record_dir = "/piech/u/anie/autogen/exp/virtualhome_recording/"
     mode = 'test'
 
     dataset_path = '/piech/u/anie/Organized-LLM-Agents/envs/cwah/dataset/test_env_set_help.pik'
@@ -857,10 +876,35 @@ class Config:
 
 
 if __name__ == '__main__':
-    pass
+    train_tasks = [8, 17, 25, 35, 42]
 
-    env = TracedEnv()
-    agent1 = TraceAgent()
-    agent2 = TraceAgent()
+    args = Config()
+    env = TracedEnv(args)
 
-    trajs, errors = rollout(env, [agent1, agent2], horizon=50)
+    trace_exp_log = []
+    noupdate_exp_log = []
+
+    for task_id in train_tasks:
+        agent1 = TraceAgent()
+        agent2 = TraceAgent()
+
+        print("STARTING TASK", task_id)
+        optimizer1 = FunctionOptimizerV2([agent1.plan])
+        optimizer2 = FunctionOptimizerV2([agent2.plan])
+
+        env.env.env.recording_options['recording'] = True
+        env.env.env.recording_options['output_folder'] = f'/piech/u/anie/autogen/exp/virtualhome_recording/task_{task_id}'
+
+        traj, log = dynamic_rollout(env, [agent1, agent2], [optimizer1, optimizer2], horizon=50, task_id=task_id)
+        trace_exp_log.append(log)
+
+        env.env.env.recording_options['recording'] = False # recording saves time
+        traj_noupdate, log_noupdate = dynamic_rollout(env, [agent1, agent2], [], horizon=50, task_id=task_id)
+        noupdate_exp_log.append(log_noupdate)
+
+    import pickle
+    with open('trace_results/trace_exp_log_task_8_17_25_35_42.pkl', 'wb') as f:
+        pickle.dump(trace_exp_log, f)
+
+    with open('trace_results/noupdate_exp_log_task_8_17_25_35_42.pkl', 'wb') as f:
+        pickle.dump(noupdate_exp_log, f)
