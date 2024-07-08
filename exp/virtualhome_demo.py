@@ -881,8 +881,8 @@ if __name__ == '__main__':
     args = Config()
     env = TracedEnv(args)
 
-    trace_exp_log = []
-    noupdate_exp_log = []
+    trace_exp_log = {}
+    noupdate_exp_log = {}
 
     for task_id in train_tasks:
         agent1 = TraceAgent()
@@ -892,15 +892,19 @@ if __name__ == '__main__':
         optimizer1 = FunctionOptimizerV2([agent1.plan])
         optimizer2 = FunctionOptimizerV2([agent2.plan])
 
-        env.env.env.recording_options['recording'] = True
-        env.env.env.recording_options['output_folder'] = f'/piech/u/anie/autogen/exp/virtualhome_recording/task_{task_id}'
+        try:
+            env.env.env.recording_options['recording'] = True
+            env.env.env.recording_options[
+                'output_folder'] = f'/piech/u/anie/autogen/exp/virtualhome_recording/task_{task_id}'
 
-        traj, log = dynamic_rollout(env, [agent1, agent2], [optimizer1, optimizer2], horizon=50, task_id=task_id)
-        trace_exp_log.append(log)
+            traj, log = dynamic_rollout(env, [agent1, agent2], [optimizer1, optimizer2], horizon=50, task_id=task_id)
+            trace_exp_log[task_id] = log
 
-        env.env.env.recording_options['recording'] = False # recording saves time
-        traj_noupdate, log_noupdate = dynamic_rollout(env, [agent1, agent2], [], horizon=50, task_id=task_id)
-        noupdate_exp_log.append(log_noupdate)
+            env.env.env.recording_options['recording'] = False # recording saves time
+            traj_noupdate, log_noupdate = dynamic_rollout(env, [agent1, agent2], [], horizon=50, task_id=task_id)
+            noupdate_exp_log[task_id] = log_noupdate
+        except:
+            continue
 
     import pickle
     with open('trace_results/trace_exp_log_task_8_17_25_35_42.pkl', 'wb') as f:
