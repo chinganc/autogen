@@ -375,7 +375,7 @@ class LLM_agent:
             action = self.gograb()
         elif self.plan.startswith('[goput]'):
             action = self.goput()
-        elif self.plan.startswith('[send_message]'):
+        elif '[send_message]' in self.plan:
             action = self.plan[:]
             self.plan = None
         elif self.plan.startswith('[wait]'):
@@ -395,7 +395,7 @@ class LLM_agent:
             # import pdb; pdb.set_trace()
 
         if action is not None:
-            if action.startswith('[send_message]'):
+            if '[send_message]' in action:
                 self.action_history.append(action.split(":")[0])
             else:
                 self.action_history.append(action if action is not None else self.plan)

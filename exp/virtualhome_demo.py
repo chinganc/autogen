@@ -878,33 +878,45 @@ class Config:
 if __name__ == '__main__':
     train_tasks = [8, 17, 25, 35, 42]
 
-    args = Config()
-    env = TracedEnv(args)
-
     trace_exp_log = {}
     noupdate_exp_log = {}
 
+    args = Config()
+    env = TracedEnv(args)
+    env.env.env.recording_options['recording'] = True
+
     for task_id in train_tasks:
-        agent1 = TraceAgent()
-        agent2 = TraceAgent()
+        GRAPH.clear()
 
         print("STARTING TASK", task_id)
-        optimizer1 = FunctionOptimizerV2([agent1.plan])
-        optimizer2 = FunctionOptimizerV2([agent2.plan])
 
         try:
-            env.env.env.recording_options['recording'] = True
+            agent1 = TraceAgent()
+            agent2 = TraceAgent()
+
+            optimizer1 = FunctionOptimizerV2([agent1.plan])
+            optimizer2 = FunctionOptimizerV2([agent2.plan])
+
             env.env.env.recording_options[
-                'output_folder'] = f'/piech/u/anie/autogen/exp/virtualhome_recording/task_{task_id}'
+                'output_folder'] = f'/piech/u/anie/autogen/exp/virtualhome_recording_trace_op/task_{task_id}'
 
             traj, log = dynamic_rollout(env, [agent1, agent2], [optimizer1, optimizer2], horizon=50, task_id=task_id)
             trace_exp_log[task_id] = log
 
-            env.env.env.recording_options['recording'] = False # recording saves time
+            env.env.env.recording_options[
+                'output_folder'] = f'/piech/u/anie/autogen/exp/virtualhome_recording_no_op/task_{task_id}'
+
+            agent1 = TraceAgent()
+            agent2 = TraceAgent()
+
+            # env.env.env.recording_options['recording'] = False # recording saves time
             traj_noupdate, log_noupdate = dynamic_rollout(env, [agent1, agent2], [], horizon=50, task_id=task_id)
             noupdate_exp_log[task_id] = log_noupdate
         except:
-            continue
+            pass
+
+        # del env # delete env and restart
+
 
     import pickle
     with open('trace_results/trace_exp_log_task_8_17_25_35_42.pkl', 'wb') as f:
