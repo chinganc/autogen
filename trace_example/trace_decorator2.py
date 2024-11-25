@@ -72,9 +72,7 @@ def magic(func):
         async def traced_func(message):  # so we only trace message
             return await func(self, message, ctx)
 
-        output = traced_func(message)  # trace.MessageNode
-         # XXX Do the actual computation
-        output._data = await output._data  # TODO error not caught here; should modify bundle
+        output = await traced_func(message)  # trace.MessageNode
 
         # HACK Remove the topic_id from the output
         topic_id = output[1].data
