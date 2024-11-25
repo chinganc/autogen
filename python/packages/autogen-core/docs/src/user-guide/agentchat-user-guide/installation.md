@@ -61,7 +61,20 @@ Install the `autogen-agentchat` package using pip:
 
 ```bash
 
-pip install autogen-agentchat==0.4.0.dev3
+pip install 'autogen-agentchat==0.4.0.dev7'
+```
+
+```{note}
+Python 3.10 or later is required.
+```
+
+## Install OpenAI for Model Client
+
+To use the OpenAI and Azure OpenAI models, you need to install the following
+extensions:
+
+```bash
+pip install 'autogen-ext[openai]==0.4.0.dev7'
 ```
 
 ## Install Docker for Code Execution

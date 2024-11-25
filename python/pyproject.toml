@@ -3,8 +3,8 @@ members = ["packages/*"]
 
 [tool.uv]
 dev-dependencies = [
-    "pyright==1.1.378",
-    "mypy==1.10.0",
+    "pyright==1.1.389",
+    "mypy==1.13.0",
     "ruff==0.4.8",
     "pytest",
     "pytest-asyncio",
@@ -25,6 +25,7 @@ dev-dependencies = [
 [tool.uv.sources]
 autogen-core = { workspace = true }
 autogen-ext = { workspace = true }
+autogen-agentchat = { workspace = true }
 
 [tool.ruff]
 line-length = 120

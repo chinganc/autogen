@@ -48,13 +48,6 @@ class HandoffMessage(BaseMessage):
     """The handoff message to the target agent."""
 
 
-class ResetMessage(BaseMessage):
-    """A message requesting reset of the recipient's state in the current conversation."""
-
-    content: str
-    """The content for the reset message."""
-
-
 class ToolCallMessage(BaseMessage):
     """A message signaling the use of tools."""
 
@@ -69,15 +62,11 @@ class ToolCallResultMessage(BaseMessage):
     """The tool call results."""
 
 
-InnerMessage = ToolCallMessage | ToolCallResultMessage
-"""Messages for intra-agent monologues."""
-
-
-ChatMessage = TextMessage | MultiModalMessage | StopMessage | HandoffMessage | ResetMessage
+ChatMessage = TextMessage | MultiModalMessage | StopMessage | HandoffMessage
 """Messages for agent-to-agent communication."""
 
 
-AgentMessage = InnerMessage | ChatMessage
+AgentMessage = TextMessage | MultiModalMessage | StopMessage | HandoffMessage | ToolCallMessage | ToolCallResultMessage
 """All message types."""
 
 
@@ -87,10 +76,8 @@ __all__ = [
     "MultiModalMessage",
     "StopMessage",
     "HandoffMessage",
-    "ResetMessage",
     "ToolCallMessage",
     "ToolCallResultMessage",
     "ChatMessage",
-    "InnerMessage",
     "AgentMessage",
 ]
